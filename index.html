@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Endless Ocean</title>
+  <meta name="description" content="An endless, procedurally generated underwater journey rendered in real time in your browser.">
+  <style>
+    html, body { margin: 0; height: 100%; background: #021826; overflow: hidden; cursor: none; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #loader { position: fixed; inset: 0; display: grid; place-items: center; color: #9fd8ea;
+      font: 300 15px/1.4 system-ui, sans-serif; letter-spacing: .3em; text-transform: uppercase;
+      background: radial-gradient(ellipse at 50% 20%, #0b4f6e, #021826 70%); transition: opacity 1.5s; }
+    #caption { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); color: #e6f6fb;
+      font: 200 clamp(18px, 2.6vw, 34px)/1 Georgia, 'Times New Roman', serif; letter-spacing: .35em;
+      text-transform: uppercase; opacity: 0; transition: opacity 3s; pointer-events: none;
+      text-shadow: 0 2px 18px rgba(0, 20, 40, .8); white-space: nowrap; }
+    #caption small { display: block; margin-top: .7em; font-size: .38em; letter-spacing: .4em; opacity: .75; text-align: center; }
+    #stats { position: fixed; left: 10px; top: 10px; color: #bfe; font: 12px monospace; white-space: pre; display: none; }
+    #help { position: fixed; right: 14px; bottom: 12px; color: #cfeaf3; font: 12px system-ui, sans-serif; opacity: 0; transition: opacity 1s; }
+  </style>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <div id="loader">Descending&hellip;</div>
+  <div id="caption"></div>
+  <div id="stats"></div>
+  <div id="help">H captions &middot; F fullscreen &middot; S stats &middot; Space pause &middot; &larr;/&rarr; speed &middot; N next zone</div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
