@@ -223,7 +223,7 @@ function tick(dt, draw) {
   time = simTime % 4096; // shader time wraps to keep float precision
   U.uTime.value = time;
   placeCamera(simTime);
-  terrain.update(s);
+  terrain.update(s, 4, Math.min(330, Math.max(90, 4.5 / Math.min(P.sigma[1], P.sigma[2]))));
   terrain.sky.syncUniforms(Oz);
   updateEnvironment(simTime);
   caustics.update(renderer, time);

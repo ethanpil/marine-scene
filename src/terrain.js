@@ -240,7 +240,12 @@ export class Terrain {
     this.update(camS, Infinity);
   }
 
-  update(camS, budgetMs = 4) {
+  update(camS, budgetMs = 4, visDist = AHEAD) {
+    // props in chunks entirely beyond the fog's visibility are hidden (terrain stays: it's cheap)
+    for (const c of this.chunks.values()) {
+      const vis = c.s0 - camS < visDist;
+      for (const p of c.props) p.object.visible = vis;
+    }
     const first = Math.floor((camS - BEHIND) / CHUNK), last = Math.floor((camS + AHEAD) / CHUNK);
     for (const [i, c] of this.chunks) if (i < first || i > last + 2) { this._disposeChunk(c); this.chunks.delete(i); }
     this.queue = this.queue.filter((q) => q.idx >= first && q.idx <= last + 2);
