@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Creature Gallery</title>
+  <style>html,body{margin:0;height:100%;background:#0b4f6e;overflow:hidden}canvas{display:block}
+  #lab{position:fixed;inset:0;pointer-events:none;font:11px monospace;color:#fff}#lab div{position:absolute;text-shadow:0 1px 2px #000}</style>
+  <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js" } }</script>
+</head>
+<body><div id="lab"></div>
+<script type="module">
+// Dev-only species gallery: ?page=N&cols=4&rows=3&sp=a,b,c&t=<anim time>&view=side|top|front
+import * as THREE from 'three';
+import { U, makeNoiseTexture } from '../water.js';
+import { SPECIES, speciesOf } from './species.js';
+import { makeMaterials } from './shader.js';
+import { GeoCache, Encounter } from './encounter.js';
+const qs = new URLSearchParams(location.search);
+const cols = +(qs.get('cols') || 4), rows = +(qs.get('rows') || 3), page = +(qs.get('page') || 0);
+let keys = qs.get('sp') ? qs.get('sp').split(',') : Object.keys(SPECIES).filter((k) => SPECIES[k]);
+keys = keys.slice(page * cols * rows, (page + 1) * cols * rows);
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+const W = innerWidth || 800, H = innerHeight || 450;
+renderer.setSize(W, H, false); renderer.domElement.style.cssText = 'width:100vw;height:100vh'; renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b6f90);
+const cam = new THREE.PerspectiveCamera(30, W / H, 0.1, 500); scene.add(cam);
+U.uNoiseTex.value = makeNoiseTexture(128);
+U.uSigma.value.set(0.004, 0.002, 0.002); U.uCausticStr.value = 0; U.uGlow.value = +(qs.get('glow') || 0);
+U.uWaterDeep.value.set(0x0b5f80); U.uWaterUp.value.set(0x52d2ea);
+const sun = new THREE.DirectionalLight(0xffffff, 2.6); sun.position.set(0.3, 1, 0.6); scene.add(sun);
+scene.add(new THREE.HemisphereLight(0x88ccff, 0x0a2030, 1.1));
+const world = new THREE.Group(); scene.add(world);
+const flat = { pathX: () => 0, pathY: () => -10, floorAt: () => -60, ceilingAt: () => 60, floorNormal: () => ({ x: 0, y: 1, z: 0 }) };
+const sys = { cache: new GeoCache(64), mats: makeMaterials(), world, shape: flat };
+const cw = 1.5, ch = 1.1, view = qs.get('view') || 'side';
+const encs = [];
+const lab = document.getElementById('lab');
+keys.forEach((k, idx) => {
+  const sp = speciesOf(k); if (!sp) return;
+  const e = new Encounter(sys, sp, { n: 1, s0: 0, l0: 0, seed: 1, variant: 7, latMax: 10 });
+  const cx = (idx % cols - (cols - 1) / 2) * cw, cy = -((idx / cols | 0) - (rows - 1) / 2) * ch - 10;
+  const upright = ['jelly', 'octopus', 'seahorse'].includes(sp.plan);
+  const ext = upright ? 0.9 : sp.plan === 'siphon' ? 1 : 1.0;
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  if (view === 'side') q.setFromEuler(new THREE.Euler(upright ? 0.15 : 0.12, upright ? 0.5 : Math.PI / 2 - 0.35, 0));
+  else if (view === 'top') q.setFromEuler(new THREE.Euler(Math.PI / 2 * 0.8, 0, 0));
+  else q.setFromEuler(new THREE.Euler(0.2, 0.6, 0));
+  m.compose(new THREE.Vector3(cx, cy - (upright ? 0.2 : 0), 0), q, new THREE.Vector3(ext, ext, ext));
+  e.mesh.position.set(0, 0, 0); e.mesh.updateMatrix();
+  e.mesh.setMatrixAt(0, m); e.mesh.instanceMatrix.needsUpdate = true; e.mesh.visible = true;
+  e.fade = 1;
+  encs.push(e);
+  const d = document.createElement('div');
+  d.textContent = k; d.style.left = ((idx % cols) / cols * 100 + 1) + '%'; d.style.top = (((idx / cols) | 0) / rows * 100 + 1) + '%';
+  lab.appendChild(d);
+});
+cam.position.set(0, -10, (rows * ch) / (2 * Math.tan(15 * Math.PI / 180)) + 0.5); cam.lookAt(0, -10, 0);
+U.uCamPos.value.copy(cam.position);
+function draw(t) {
+  U.uTime.value = t;
+  for (const e of encs) { const A = e.aAnim.array; A[0] = t * 6.0; A[1] = 1; A[2] = 0; A[3] = 1; e.aAnim.needsUpdate = true; }
+  renderer.render(scene, cam);
+}
+window.draw = draw;
+draw(+(qs.get('t') || 0.4));
+</script>
+</body>
+</html>
