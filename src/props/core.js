@@ -297,10 +297,12 @@ export class Batch {
   // place template with rotation R (row-major 3x3), scale, tint and fx.x multiplier
   add(tpl, x, y, z, R, sx, sy = sx, sz = sx, cr = 1, cg = 1, cb = 1, fa = 1) {
     if (!tpl || (this.ic + tpl.idx.length) / 3 > this.max) return false;
-    this.items.push({ tpl, x, y, z, R, sx, sy, sz, cr, cg, cb, fa });
+    this.items.push({ tpl, x, y, z, R, sx, sy, sz, cr, cg, cb, fa, ko: 0, lbl: null });
     this.vc += tpl.vc; this.ic += tpl.idx.length;
     return true;
   }
+  // per-instance extras for the last added item: texture-key offset, label override
+  tag(ko, lbl) { const it = this.items[this.items.length - 1]; if (it) { it.ko = ko; it.lbl = lbl; } }
   // Split items into n slices of similar vertex count; build(k, n) merges slice k only.
   build(k = 0, n = 1, pad = 1) {
     if (!this.items.length) return null;
@@ -327,7 +329,7 @@ export class Batch {
       const t = it.tpl, R = it.R, sx = it.sx, sy = it.sy, sz = it.sz;
       const r0 = R[0], r1 = R[1], r2 = R[2], r3 = R[3], r4 = R[4], r5 = R[5], r6 = R[6], r7 = R[7], r8 = R[8];
       const P = t.pos, N = t.nor, C = t.col, F = t.fx, tx = it.x, ty = it.y, tz = it.z;
-      const cr = it.cr, cg = it.cg, cb = it.cb, fa = it.fa;
+      const cr = it.cr, cg = it.cg, cb = it.cb, fa = it.fa, ko = it.ko;
       const uni = sx === sy && sy === sz;
       const isx = 1 / sx, isy = 1 / sy, isz = 1 / sz;
       const nv = t.vc, ob = vo * 3;
@@ -349,7 +351,12 @@ export class Batch {
         col[o] = C[k3] * cr; col[o + 1] = C[k3 + 1] * cg; col[o + 2] = C[k3 + 2] * cb;
       }
       const fo = vo * 2;
-      for (let i = 0, e = nv * 2; i < e; i += 2) { fx[fo + i] = F[i] * fa; fx[fo + i + 1] = F[i + 1]; }
+      for (let i = 0, e = nv * 2; i < e; i += 2) {
+        fx[fo + i] = F[i] * fa;
+        const m = F[i + 1];
+        // rock/stone texture keys (6.x) and brain-groove keys (0.6..1.4) shift per instance
+        fx[fo + i + 1] = ko && m > 5.5 ? 6.05 + ((m - 6.05 + ko) % 0.9) : ko && m > 0.55 && m < 1.45 ? 0.6 + ((m - 0.6 + ko * 0.8) % 0.8) : m;
+      }
       const I = t.idx;
       for (let i = 0; i < I.length; i++) idx[io + i] = I[i] + vo;
       vo += nv; io += I.length;
@@ -362,10 +369,20 @@ export class Batch {
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     g.computeBoundingSphere();
     g.boundingSphere.radius += pad;
+    releaseAfterUpload(g);
     const m = new THREE.Mesh(g, this.mat);
     m.matrixAutoUpdate = false;
     return m;
   }
+}
+
+// Free CPU-side vertex data once the GPU has it (less heap / GC pressure while streaming).
+// Set window.__propsKeepArrays = true before load to keep them for debugging.
+function dropArray() { this.array = null; }
+export function releaseAfterUpload(g) {
+  if (typeof window !== 'undefined' && window.__propsKeepArrays) return;
+  for (const k in g.attributes) g.attributes[k].onUpload(dropArray);
+  if (g.index) g.index.onUpload(dropArray);
 }
 
 // ---------- Instanced helper (shared template geometry, per-chunk instance buffers) ----------
@@ -476,8 +493,8 @@ export function presence(ctx, key) {
 
 // Staged populators: stage 0 runs layout(ctx) -> parts (Batches / builder fns) and caches it per chunk;
 // stages 1..n each merge one slice of every batch (keeps each call within the frame budget).
-const VERTS_PER_STAGE = 20000;
-export function staged(layout, nBuild = 8) {
+const VERTS_PER_STAGE = 15000;
+export function staged(layout, nBuild = 12) {
   const cache = new WeakMap();
   const pops = [(ctx) => {
     const L = layout(ctx);
@@ -586,9 +603,10 @@ function register(ctx, batches) {
         const px = x * it.sx, py = y * it.sy, pz = z * it.sz;
         return [R[0] * px + R[1] * py + R[2] * pz + it.x, R[3] * px + R[4] * py + R[5] * pz + it.y, ctx.s0 - (R[6] * px + R[7] * py + R[8] * pz + it.z)];
       };
-      if (t.label && size > 0.12) {
+      const name = it.lbl || t.label;
+      if (name && size > 0.12) {
         const c = tf((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2);
-        labels.push([size, t.label, c]);
+        labels.push([it.lbl ? size * 3 : size, name, c]);
       }
       if (swayMat || !t.solid || size < 0.4) continue;
       for (const o of t.obstacles()) {
@@ -612,3 +630,36 @@ function register(ctx, batches) {
   ctx._obsCount = Math.min(MAX_OBS, (ctx._obsCount || 0) + obs.length);
   ctx._lblCount = Math.min(MAX_LABELS, (ctx._lblCount || 0) + labels.length);
 }
+
+// ---------- shape variants: deform a template N ways (noise displacement, non-uniform scale, bend, twist) ----------
+export function variants(tpl, n, seed, { disp = 0.08, freq = 1.6, scale = 0.22, bend = 0.12, twist = 0.25, smooth = true } = {}) {
+  const out = [tpl];
+  const [x0, y0, z0, x1, y1, z1] = tpl.box;
+  const ext = Math.max(x1 - x0, y1 - y0, z1 - z0) || 1, H = Math.max(1e-3, y1 - y0);
+  for (let k = 1; k < n; k++) {
+    let st = (seed * 9301 + k * 49297) % 233280;
+    const r = () => (st = (st * 9301 + 49297) % 233280) / 233280;
+    const sx = 1 + (r() - 0.5) * 2 * scale, sy = 1 + (r() - 0.5) * 2 * scale, sz = 1 + (r() - 0.5) * 2 * scale;
+    const bx = (r() - 0.5) * 2 * bend, bz = (r() - 0.5) * 2 * bend, tw = (r() - 0.5) * 2 * twist, sd = (seed * 31 + k * 7) | 0;
+    const b = new Builder();
+    b.P = Array.from(tpl.pos); b.N = Array.from(tpl.nor); b.C = Array.from(tpl.col); b.F = Array.from(tpl.fx); b.I = Array.from(tpl.idx);
+    for (let i = 0; i < b.P.length; i += 3) {
+      let x = b.P[i], y = b.P[i + 1], z = b.P[i + 2];
+      const t = (y - y0) / H, f = freq / ext;
+      const d = 1 + disp * vn3(x * f + sd, y * f, z * f, sd);
+      x *= d; z *= d; y = y0 + (y - y0) * (1 + disp * 0.5 * vn3(x * f, y * f + 3, z * f, sd + 1));
+      const a = tw * t, c = Math.cos(a), s = Math.sin(a);
+      const xr = x * c - z * s, zr = x * s + z * c;
+      b.P[i] = xr * sx + bx * t * t * H; b.P[i + 1] = y * sy; b.P[i + 2] = zr * sz + bz * t * t * H;
+    }
+    if (smooth) b.smooth(0, 0);
+    b.obs = tpl.obs ? tpl.obs.map((o) => o.slice()) : null;
+    b.label = tpl.label; b.solid = tpl.solid;
+    const v = b.build();
+    v.vents = tpl.vents;
+    out.push(v);
+  }
+  return out;
+}
+// expand every template in a list into n variants each
+export const vary = (list, n, seed, opts) => list.flatMap((t, i) => variants(t, n, seed + i * 101, opts));

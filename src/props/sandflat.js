@@ -1,9 +1,9 @@
 // Sand flats: rippled turquoise plain with dense small life (shells, sand dollars, sea pens, stars,
 // cucumbers, conchs, grass tufts, coral rubble, shell grit, garden-eel burrow colonies), occasional
 // coral heads / rocks, and pinnacles or big coral heads on the outside of bends to steer around.
-import { Builder, Batch, T, TAU, sat, lerp, vn3, floorSampler, presence, budgetK, bendSpots } from './core.js';
+import { Builder, Batch, T, TAU, sat, lerp, vn3, floorSampler, presence, budgetK, bendSpots, vary } from './core.js';
 import { grassPatch } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot, putBend, bendX, microDetail } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, putBend, bendX, microDetail, clusterer } from './scatter.js';
 import { bommie } from './reef.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
@@ -38,8 +38,8 @@ function burrows(seed, { n = 9, r = 1.4 } = {}) {
 }
 
 export function initSandflat() {
-  T.seaPen = [1, 2, 3, 4, 5, 6].map(seaPen);
-  T.burrows = [1, 2].map((s) => burrows(s));
+  T.seaPen = vary([1, 2, 3, 4, 5, 6, 7, 8].map(seaPen), 2, 51, { disp: 0.05, bend: 0.2, twist: 0.3 });
+  T.burrows = vary([1, 2, 3, 4].map((s) => burrows(s, { n: 4 + s * 3, r: 0.8 + s * 0.4 })), 2, 61, { disp: 0.05, bend: 0, twist: 0.6 });
   T.tuft = [1, 2, 3, 4, 5, 6].map((k) => grassPatch(900 + k, { n: 4 + k, r: 0.12 + 0.03 * k, h: 0.22 + 0.05 * k, w: 0.025 + 0.003 * k, segs: 2, base: [0.1, 0.18, 0.05], mid: [0.3, 0.55, 0.15], tipc: [0.6, 0.6, 0.25], sway: 0.25 }));
 }
 
@@ -95,8 +95,10 @@ export function layoutSandflat(ctx) {
   }
   // dense small life everywhere, including under the camera; patchy via noise
   microDetail(ctx, fs, st, rng, 'sandflat', sp.micro, 420, 32);
+  const nextP99 = clusterer(ctx, rng, 0, 30, 1.2);
   for (let k = 0; k < 260; k++) {
-    const p = spot(ctx, rng, 0, 30, 1.2);
+    const p = nextP99();
+    if (!p) continue;
     const w = ctx.weightOf(p.s, 'sandflat') * (0.4 + 0.6 * Math.max(0, noise2(p.x / 9, p.s / 9, 931) + 0.4));
     if (rng() > w) continue;
     const e = pickW(rng, sp.soft);

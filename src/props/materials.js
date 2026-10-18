@@ -88,8 +88,9 @@ diffuseColor.rgb *= 1.0 + (pA.rgb - 0.5) * vec3(0.32, 0.22, 0.28);   // natural 
 const COLOR_STATIC = COLOR_COMMON + /* glsl */`
 if (pMode > 0.5 && pMode < 1.5) {
   // brain coral: contour lines of smooth noise make meandering grooves
-  vec4 pC = pTri(vWPos, pW, 8.0);
-  float q = pC.r * 7.0 + pC.g * 2.5;
+  float gk = pMode - 1.0;
+  vec4 pC = pTri(vWPos + vec3(gk * 9.0), pW, gk < -0.13 ? 4.0 : (gk < 0.13 ? 8.0 : 16.0));
+  float q = pC.r * (5.0 + 6.0 * fract(gk * 7.3 + 0.5)) + pC.g * 2.5;
   float l = abs(fract(q) - 0.5) * 2.0;
   float groove = 1.0 - smoothstep(0.12, 0.5, l);
   groove = mix(groove, 0.4, smoothstep(0.25, 0.7, fwidth(q)));

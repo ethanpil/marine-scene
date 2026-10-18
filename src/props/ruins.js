@@ -1,8 +1,8 @@
 // Sunken city: colonnade avenues, gates spanning the flight path, paved roads, block walls, stepped
 // pyramids with statues on the terraces, amphorae and fallen masonry, all overgrown.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, tubeClear, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, tubeClear, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots, vary } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, putBend, microDetail, clusterer } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise1, noise2, hash2i } from '../noise.js';
 
@@ -177,7 +177,7 @@ function wall(seed, len = 8) {
 }
 
 function pyramid(seed) {
-  const b = new Builder(), rng = mulberry32(seed), tiers = 4 + Math.floor(rng() * 3), base = 18 + rng() * 6, th = 2.0;
+  const b = new Builder(), rng = mulberry32(seed * 53), tiers = 3 + Math.floor(rng() * 5), base = 14 + rng() * 12, th = 1.6 + rng() * 0.9;
   for (let t = 0; t < tiers; t++) {
     const w = base * (1 - t / (tiers + 1.3)), y = t * th;
     const k = 0.8 + 0.2 * rng();
@@ -245,12 +245,14 @@ function figure(seed) {
 }
 
 function amphora(seed) {
-  const b = new Builder(), col = [0.5, 0.3, 0.2];
+  const b = new Builder(), rng = mulberry32(seed * 41);
+  const col = [[0.5, 0.3, 0.2], [0.58, 0.38, 0.24], [0.42, 0.25, 0.18], [0.6, 0.45, 0.32]][seed % 4];
+  const H = 0.75 + rng() * 0.35, belly = 0.16 + rng() * 0.12, bp = 0.5 + rng() * 0.2, neck = 0.05 + rng() * 0.04;
   const prof = (v) => {
-    if (v < 0.1) return [0.05 + v * 0.6, v * 0.9];
-    if (v < 0.65) return [0.11 + 0.2 * Math.sin(((v - 0.1) / 0.55) * Math.PI * 0.85), v * 0.9];
-    if (v < 0.9) return [0.07 + 0.08 * (1 - (v - 0.65) / 0.25), v * 0.9];
-    return [0.085, v * 0.9];
+    if (v < 0.1) return [0.04 + v * 0.5 * (1 + rng() * 0), v * H];
+    if (v < bp + 0.1) return [0.08 + belly * Math.sin(((v - 0.1) / bp) * Math.PI * 0.85), v * H];
+    if (v < 0.9) return [neck + 0.06 * (1 - (v - bp - 0.1) / (0.8 - bp)), v * H];
+    return [neck + 0.015, v * H];
   };
   b.lathe(10, 12, prof, null, (v, a, x, y, z, o) => { const c = 0.7 + 0.3 * v; o[3] = col[0] * c; o[4] = col[1] * c; o[5] = col[2] * c; o[6] = 0.4; });
   for (const sd of [-1, 1]) {
@@ -258,6 +260,32 @@ function amphora(seed) {
     b.tube(pts, [0.02, 0.02, 0.02, 0.02], 4, (v, a, x, y, z, o) => { o[3] = col[0]; o[4] = col[1]; o[5] = col[2]; o[6] = 0.4; });
   }
   return b.build();
+}
+
+// wide-mouthed urn with a lip and a fallen lid
+function urn(seed) {
+  const b = new Builder(), rng = mulberry32(seed * 43), col = [0.55, 0.42, 0.3], H = 0.5 + rng() * 0.3, W = 0.2 + rng() * 0.1;
+  b.lathe(12, 8, (v) => [W * (0.55 + 0.5 * Math.sin(v * Math.PI * 0.95)) + (v > 0.92 ? 0.03 : 0), v * H], null, (v, a, x, y, z, o) => { const c = 0.7 + 0.35 * v; o[3] = col[0] * c; o[4] = col[1] * c; o[5] = col[2] * c; o[6] = 0.5; });
+  b.lathe(12, 2, (v) => [W * 0.7 * (1 - v * 0.6), H - v * H * 0.4], null, (v, a, x, y, z, o) => { o[3] = 0.12; o[4] = 0.09; o[5] = 0.07; }, { flip: true });
+  const t = b.build(); t.label = 'Urn'; return t;
+}
+// big storage jar, half buried
+function pithos(seed) {
+  const b = new Builder(), col = [0.52, 0.34, 0.24], H = 1.4 + (seed % 2) * 0.4;
+  b.lathe(16, 10, (v) => [0.18 + 0.4 * Math.sin(v * Math.PI * 0.9) + 0.03 * Math.sin(v * 30), v * H], (a, v) => 1 + 0.03 * vn3(Math.cos(a) * 2, v * 4, Math.sin(a) * 2, seed),
+    (v, a, x, y, z, o) => { const band = Math.abs(Math.sin(v * 30)) > 0.92 ? 0.8 : 1; o[3] = col[0] * band; o[4] = col[1] * band; o[5] = col[2] * band; o[6] = 0.7; });
+  const t = b.build(); t.label = 'Storage jar (pithos)'; return t;
+}
+// fragment of a monumental stair
+function steps(seed) {
+  const b = new Builder(), rng = mulberry32(seed * 47), n = 3 + Math.floor(rng() * 5), W = 2.5 + rng() * 3;
+  for (let k = 0; k < n; k++) {
+    for (let x = -W / 2; x < W / 2; x += 0.8 + rng() * 0.6) {
+      if (rng() < 0.12) continue;
+      stoneBlock(b, rng, 0.75 + rng() * 0.4, 0.32, 0.7, rotY((rng() - 0.5) * 0.06), x + 0.4, 0.16 + k * 0.32, -k * 0.6 + (rng() - 0.5) * 0.05);
+    }
+  }
+  const t = b.build(); t.label = 'Temple steps'; return t;
 }
 
 function slab(seed, w, d) {
@@ -281,10 +309,13 @@ export function initRuins() {
   T.drum = COL_STYLE_KEYS.flatMap((k) => T.colStyle[k].drum);
   T.gate = [[4.4, 5.1, 5.8].map((R, i) => gateArch(10 + i, R)), [4.4, 5.1, 5.8].map((R, i) => gateTrilithon(20 + i, R)), [4.6, 5.4].map((R, i) => gateTorii(30 + i, R))];
   T.wall = [1, 2, 3, 4, 5, 6, 7, 8].map((s) => wall(s, 4 + (s % 4) * 1.6));
-  T.pyramid = [1, 2].map(pyramid);
-  T.head = [1, 2, 3, 4, 5].map(head);
-  T.figure = [1, 2, 3, 4, 5].map(figure);
-  T.amphora = [amphora(1)];
+  T.pyramid = [1, 2, 3, 4].map(pyramid);
+  T.head = vary([1, 2, 3, 4, 5, 6].map(head), 2, 81, { disp: 0.04, bend: 0.04, twist: 0.1 });
+  T.figure = vary([1, 2, 3, 4, 5, 6].map(figure), 2, 82, { disp: 0.04, bend: 0.08, twist: 0.3 });
+  T.amphora = [1, 2, 3, 4, 5, 6].map(amphora);
+  T.urn = [1, 2, 3].map(urn);
+  T.pithos = [1, 2].map(pithos);
+  T.steps = [1, 2, 3, 4].map(steps);
   T.slab = [slab(1, 1.1, 0.8), slab(2, 0.8, 0.8), slab(3, 1.4, 0.7)];
   T.block = [1, 2].map((sd) => { const b = new Builder(); stoneInto(b, { sx: 1.2, sy: 0.7, sz: 0.9, p: 5, rough: 0.08, seed: sd, detail: 2, col: STONE, growth: GROW }); b.xform(0, I3, 0, 0.3, 0); return b.build(); });
 }
@@ -298,6 +329,8 @@ function specs() {
     rock: { tpl: T.rocks, scale: [0.4, 1.4], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.5, tint: tintFrom([[0.55, 0.52, 0.47]]) },
     block: { tpl: T.block, scale: [0.7, 1.4], follow: 0.7, tilt: 0.5, sink: 0.15, tint: st },
     drum: { tpl: T.drum, scale: [0.9, 1.1], follow: 0.9, sink: 0.12, tint: st },
+    urn: { tpl: [...T.urn, ...T.pithos], scale: [0.9, 1.3], follow: 0.6, tilt: 0.5, sink: 0.25, tint: tintFrom([[1, 1, 1], [0.85, 0.9, 1]]) },
+    steps: { tpl: T.steps, scale: [0.9, 1.2], follow: 0.8, sink: 0.12, tint: tintFrom([[1, 1, 1], [1.2, 1.0, 0.75], [0.6, 0.6, 0.65]]) },
     amphora: { tpl: T.amphora, scale: [0.9, 1.3], follow: 0.6, tilt: 0.6, sink: 0.15, tint: tintFrom([[1, 1, 1], [0.8, 0.85, 0.9]]) },
     colB: { tpl: T.columnBroken, scale: [0.9, 1.1], follow: 0.05, tint: st },
     head: { tpl: T.head, scale: [1.6, 2.6], follow: 0.3, tilt: 0.25, sink: 0.15, tint: st },
@@ -317,7 +350,7 @@ function specs() {
   });
   S.micro = [{ w: 3, spec: S.rubble }, { w: 1.6, spec: S.algae }, { w: 1.2, spec: S.lump }];
   S.scatter = [
-    { w: 2.5, k: 'block' }, { w: 1.5, k: 'drum' }, { w: 2, k: 'amphora' }, { w: 1.2, k: 'rock' }, { w: 1.5, k: 'sponge' },
+    { w: 2.5, k: 'block' }, { w: 0.9, k: 'urn' }, { w: 0.5, k: 'steps' }, { w: 1.5, k: 'drum' }, { w: 2, k: 'amphora' }, { w: 1.2, k: 'rock' }, { w: 1.5, k: 'sponge' },
     { w: 1.2, k: 'soft', sway: true }, { w: 1.2, k: 'fan', sway: true }, { w: 0.8, k: 'anem', sway: true }, { w: 1, k: 'urchin' }, { w: 1, k: 'brain' },
     { w: 0.25, k: 'head' }, { w: 0.3, k: 'figure' },
   ];
@@ -429,8 +462,10 @@ export function layoutRuins(ctx) {
   }
   for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'ruins') * 0.75) putBend(ctx, fs, st, sp.bendCol, b, rng);
   microDetail(ctx, fs, st, rng, 'ruins', sp.micro, 140, 30);
+  const nextP466 = clusterer(ctx, rng, 0, 42, 1.2);
   for (let k = 0; k < 150; k++) {
-    const p = spot(ctx, rng, 0, 42, 1.2);
+    const p = nextP466();
+    if (!p) continue;
     if (rng() > ctx.weightOf(p.s, 'ruins')) continue;
     const e = pickW(rng, sp.scatter);
     putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng);

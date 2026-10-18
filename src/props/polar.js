@@ -1,8 +1,8 @@
 // Polar sea ice: rubble keels and icebergs hanging from the ice ceiling, brinicles, and sparse benthos
 // on the far floor. Ice uses the static material's translucent ice mode (5).
-import { Builder, Batch, T, TAU, sat, sstep, vn3, fbm3, floorSampler, presence, tubeClear, pointsClear, placedPoints, rotY, rotX, rotZ, mul3, budgetK, bendSpots } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, vn3, fbm3, floorSampler, presence, tubeClear, pointsClear, placedPoints, rotY, rotX, rotZ, mul3, budgetK, bendSpots, vary } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, bendX } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, bendX, clusterer } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -37,6 +37,21 @@ function iceberg(seed) {
   return b.build();
 }
 
+// smooth melt-sculpted keel; optional vertical brine channels
+function sculptedKeel(seed, channels) {
+  const b = new Builder(), rng = mulberry32(seed * 61), L = 6 + rng() * 10, D = 3 + rng() * 6, W = 2 + rng() * 3, ch = 8 + Math.floor(rng() * 10);
+  b.blob(3, (x, y, z, o) => {
+    let d = 1 + 0.25 * fbm3(x * 1.2 + seed, y * 1.2, z * 1.2, 2, seed);
+    const th = Math.atan2(z, x);
+    if (channels) d *= 1 - 0.08 * Math.pow(Math.abs(Math.sin(th * ch / 2)), 8) * sat(-y);
+    let py = y * d; py = py > 0 ? py * 0.1 : py;
+    o[0] = x * d * L / 2; o[1] = py * D; o[2] = z * d * W / 2;
+    const c = 0.85 + 0.2 * vn3(x * 3, y * 3, z * 3, seed);
+    o[3] = ICE[0] * c; o[4] = ICE[1] * c; o[5] = ICE[2] * c; o[6] = 0.7 + 0.3 * sat(-y); o[7] = 5;
+  });
+  const t = b.build(); t.label = channels ? 'Ice keel with brine channels' : 'Sculpted ice keel'; return t;
+}
+
 function brinicle(seed) {
   const b = new Builder();
   b.lathe(7, 6, (v) => [0.08 * (1 - v) ** 1.3 + 0.008 + 0.012 * Math.sin(v * 30 + seed), -v], (a, v) => 1 + 0.25 * vn3(Math.cos(a), v * 6, Math.sin(a), seed),
@@ -45,9 +60,10 @@ function brinicle(seed) {
 }
 
 export function initPolar() {
-  T.keel = [rubbleKeel(1, 10, 5), rubbleKeel(2, 14, 7), rubbleKeel(3, 8, 4)];
-  T.berg = [1, 2].map(iceberg);
-  T.brinicle = [1, 2].map(brinicle);
+  T.keel = [[1, 10, 5], [2, 14, 7], [3, 8, 4], [4, 12, 9], [5, 6, 3], [6, 16, 6]].map(([s, L, D]) => rubbleKeel(s, L, D));
+  T.keel.push(...[1, 2, 3].map((s) => sculptedKeel(s, false)), ...[4, 5, 6].map((s) => sculptedKeel(s, true)));
+  T.berg = vary([1, 2, 3, 4, 5].map(iceberg), 2, 111, { disp: 0.1, bend: 0.05, twist: 0.3 });
+  T.brinicle = vary([1, 2, 3, 4, 5, 6].map(brinicle), 2, 121, { disp: 0.15, bend: 0.2, twist: 0.6 });
 }
 
 const S = {};
@@ -116,8 +132,10 @@ export function layoutPolar(ctx) {
     st.add(rng.pick(T.brinicle), p.x, c + 0.15, -(p.s - ctx.s0), rotY(rng() * TAU), 1 + rng() * 0.6, L, 1 + rng() * 0.6, 1, 1, 1, 1);
   }
   // benthos far below
+  const nextP136 = clusterer(ctx, rng, 0, 40, 1);
   for (let k = 0; k < 45; k++) {
-    const p = spot(ctx, rng, 0, 40, 1);
+    const p = nextP136();
+    if (!p) continue;
     if (rng() > ctx.weightOf(p.s, 'polar')) continue;
     const e = pickW(rng, sp.list);
     putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng);

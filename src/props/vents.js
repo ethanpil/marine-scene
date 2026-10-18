@@ -1,9 +1,9 @@
 // Hydrothermal vents: black-smoker chimneys (glowing mineral bases, sulphide streaks) with billowing
 // smoke plumes, tube-worm thickets, mussel beds and bacterial mats. Vent fields are seeded per segment;
 // each chunk instantiates the field members whose centre lies inside it.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK, bendSpots } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK, bendSpots, vary, rotZ } from './core.js';
 import { musselBed, rockInto, rockSet } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, bendX, microDetail } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer } from './scatter.js';
 import { MAT, billboardMesh } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -55,6 +55,26 @@ function chimney(seed, H) {
   return tpl;
 }
 
+// squat beehive chimney: wide lumpy dome venting from many small orifices
+function beehive(seed) {
+  const b = new Builder(), rng = mulberry32(seed * 59), R = 1.0 + rng() * 0.8, H = 2 + rng() * 2.5, vents = [];
+  b.lathe(14, 10, (v) => [R * Math.pow(1 - v, 0.55) * (1 + 0.08 * Math.sin(v * 22)) + 0.05, H * Math.sin(v * Math.PI * 0.5)], (a, v) => 1 + 0.25 * vn3(Math.cos(a) * 1.5, v * 4, Math.sin(a) * 1.5, seed),
+    (v, a, x, y, z, o) => { mineral(x, y, z, seed + 3, o); const g = sstep(0.15, 0, v) * 1.1 + (vn3(x * 3, y * 3, z * 3, seed) > 0.5 ? 0.6 : 0); o[6] = g; o[7] = 3; });
+  for (let k = 0; k < 3; k++) { const a = rng() * TAU, v = 0.5 + rng() * 0.45, r = R * Math.pow(1 - v, 0.55); vents.push([Math.cos(a) * r, H * Math.sin(v * Math.PI * 0.5), Math.sin(a) * r, 0.25]); }
+  const t = b.build(); t.vents = vents; t.label = 'Beehive smoker'; return t;
+}
+// toppled spire lying on the mound, still smoking from its broken end
+function toppled(seed) {
+  const t0 = chimney(100 + seed, 8 + seed * 2), b = new Builder();
+  b.P = Array.from(t0.pos); b.N = Array.from(t0.nor); b.C = Array.from(t0.col); b.F = Array.from(t0.fx); b.I = Array.from(t0.idx);
+  const R = rotZ(1.25 + seed * 0.1);
+  b.xform(0, R, 0, 0.6, 0);
+  const t = b.build();
+  t.vents = t0.vents.slice(0, 1).map((v) => { const p = [R[0] * v[0] + R[1] * v[1] + R[2] * v[2], R[3] * v[0] + R[4] * v[1] + R[5] * v[2] + 0.6, R[6] * v[0] + R[7] * v[1] + R[8] * v[2]]; return [p[0], Math.max(0.3, p[1]), p[2], v[3] * 0.7]; });
+  t.label = 'Toppled chimney';
+  return t;
+}
+
 function tubeWorms(seed, { n = 32, r = 0.45 } = {}) {
   const b = new Builder(), rng = mulberry32(seed);
   for (let k = 0; k < n; k++) {
@@ -87,10 +107,10 @@ function bacterialMat(seed) {
 }
 
 export function initVents() {
-  T.chimney = [[1, 6], [2, 9], [3, 12], [4, 15], [5, 8]].map(([s, h]) => chimney(s, h));
-  T.worms = [1, 2, 3].map((s) => tubeWorms(s, { n: 26 + s * 6 }));
-  T.ventMussels = [1, 2].map((s) => musselBed(60 + s, { n: 60, r: 0.8, col: [0.3, 0.22, 0.1], edge: [0.55, 0.45, 0.22], len: 0.12 }));
-  T.mat = [1, 2].map(bacterialMat);
+  T.chimney = [...[[1, 6], [2, 9], [3, 12], [4, 15], [5, 8], [6, 11], [7, 7], [8, 13]].map(([s, h]) => chimney(s, h)), ...[1, 2, 3].map(beehive), ...[1, 2].map(toppled)];
+  T.worms = vary([1, 2, 3, 4, 5, 6].map((s) => tubeWorms(s, { n: 12 + s * 7, r: 0.25 + s * 0.06 })), 2, 91, { disp: 0.06, bend: 0.15, twist: 0.4 });
+  T.ventMussels = [1, 2, 3, 4, 5].map((s) => musselBed(60 + s, { n: 25 + s * 12, r: 0.4 + s * 0.15, col: [0.3, 0.22, 0.1], edge: [0.55, 0.45, 0.22], len: 0.1 + s * 0.008 }));
+  T.mat = vary([1, 2, 3].map(bacterialMat), 2, 93, { disp: 0.05, bend: 0, twist: 0.8 });
   T.ventRock = rockSet(['volcanic', 'angular'], 4, { detail: 3, growth: 0 });
 }
 
@@ -176,8 +196,10 @@ export function layoutVents(ctx) {
   }
   microDetail(ctx, fs, st, rng, 'vents', sp.micro, 110, 28);
   // sparse rocks and the odd mat elsewhere
+  const nextP200 = clusterer(ctx, rng, 0, 40, 1);
   for (let k = 0; k < 50; k++) {
-    const p = spot(ctx, rng, 0, 40, 1);
+    const p = nextP200();
+    if (!p) continue;
     if (rng() > ctx.weightOf(p.s, 'vents')) continue;
     putFloor(ctx, fs, st, rng() < 0.7 ? sp.rock : sp.mat, p.x, p.s, rng);
   }

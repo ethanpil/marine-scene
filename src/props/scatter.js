@@ -10,18 +10,22 @@ export function pickW(rng, list) {
 }
 export const pick = (rng, a) => a[(rng() * a.length) | 0];
 
-// spec: { tpl: Template|Template[], scale: [a,b], ys: [a,b] (y-stretch), follow, sink, tint(rng) -> rgb,
-//         sway (bool: scale fx by size), fa, tilt, maxSlope, minK }
+// spec: { tpl: Template|Template[], scale: [a,b], ys: [a,b] (y-stretch), xz (depth-stretch amount), follow, sink,
+//         tint(rng) -> rgb, sway (bool: scale fx by size), fa, grow [a,b], tilt, maxSlope, minK,
+//         giant (probability of a rare 2.2-3x showpiece, labelled "Giant ...") }
+// Every placement also gets mild default non-uniform scale, lean and a per-instance texture-key offset.
 // Places at explicit y with normal n. Returns the placed scale, or 0 if rejected.
 export function putAt(ctx, batch, spec, x, y, s, nx, ny, nz, rng, sizeK = 1) {
   const tpl = Array.isArray(spec.tpl) ? spec.tpl[(rng() * spec.tpl.length) | 0] : spec.tpl;
   if (spec.maxSlope && ny < spec.maxSlope) return 0;
-  let sc = (spec.scale[0] + (spec.scale[1] - spec.scale[0]) * rng()) * sizeK;
-  const ys = spec.ys ? spec.ys[0] + (spec.ys[1] - spec.ys[0]) * rng() : 1;
+  let sc = (spec.scale[0] + (spec.scale[1] - spec.scale[0]) * Math.pow(rng(), 1.3)) * sizeK;
+  const giant = spec.giant && rng() < spec.giant;
+  if (giant) sc *= 2.2 + rng() * 0.8;
+  const ys = spec.ys ? spec.ys[0] + (spec.ys[1] - spec.ys[0]) * rng() : 0.85 + rng() * 0.32;
   const minSc = spec.scale[0] * (spec.minK ?? 0.35);
-  const zs = spec.xz ? 1 + (rng() - 0.5) * spec.xz : 1;
+  const zs = 1 + (rng() - 0.5) * (spec.xz ?? 0.3);
   const top = ctx.surfaceY - 0.08;
-  const tilt = spec.tilt || 0;
+  const tilt = spec.tilt ?? ((spec.follow ?? 0.6) >= 0.95 ? 0.03 : 0.14);
   const R = orient(nx, ny, nz, spec.follow ?? 0.6, rng() * TAU, (rng() - 0.5) * tilt, (rng() - 0.5) * tilt);
   const lean = Math.sqrt(R[1] * R[1] + R[7] * R[7]), up = Math.max(0.2, R[4]); // tilted items reach sideways
   let ok = false;
@@ -34,8 +38,10 @@ export function putAt(ctx, batch, spec, x, y, s, nx, ny, nz, rng, sizeK = 1) {
   if (!ok) return 0;
   const c = spec.tint ? spec.tint(rng) : [1, 1, 1];
   const sink = (spec.sink ?? 0.04) * sc * ys + (1 - ny) * tpl.r * sc * 0.5;
-  const fa = (spec.sway ? sc : 1) * (spec.fa ?? 1) * (spec.grow ? spec.grow[0] + (spec.grow[1] - spec.grow[0]) * rng() : 1);
-  return batch.add(tpl, x, y - sink, -(s - ctx.s0), R, sc, sc * ys, sc * zs, c[0], c[1], c[2], fa) ? sc : 0;
+  const fa = (spec.sway ? sc : 1) * (spec.fa ?? 1) * (spec.grow ? spec.grow[0] + (spec.grow[1] - spec.grow[0]) * rng() : 0.5 + rng());
+  if (!batch.add(tpl, x, y - sink, -(s - ctx.s0), R, sc, sc * ys, sc * zs, c[0], c[1], c[2], fa)) return 0;
+  batch.tag(rng(), giant && tpl.label ? 'Giant ' + tpl.label.charAt(0).toLowerCase() + tpl.label.slice(1) : null);
+  return sc;
 }
 
 export function putFloor(ctx, fs, batch, spec, x, s, rng, sizeK = 1) {
@@ -51,13 +57,37 @@ export function spot(ctx, rng, d0, d1, bias = 1) {
   return { s, x: ctx.pathX(s) + side * d, d, side };
 }
 
-// tint helpers: pick a base colour and jitter brightness / hue slightly
+// tint helpers: pick a base colour and jitter value, saturation and hue per instance
 export function tintFrom(list, amt = 0.15) {
   return (rng) => {
-    const c = list[(rng() * list.length) | 0], k = 1 + (rng() - 0.5) * 2 * amt;
-    return [c[0] * k * (1 + (rng() - 0.5) * amt), c[1] * k * (1 + (rng() - 0.5) * amt), c[2] * k * (1 + (rng() - 0.5) * amt)];
+    const c = list[(rng() * list.length) | 0], k = 1 + (rng() - 0.5) * 2.4 * amt;
+    const l = (c[0] + c[1] + c[2]) / 3, sat = 1 + (rng() - 0.5) * 3 * amt;
+    const h = (rng() - 0.5) * 1.6 * amt; // small hue shift: rotate energy between channels
+    const r = l + (c[0] - l) * sat, g = l + (c[1] - l) * sat, b = l + (c[2] - l) * sat;
+    return [Math.max(0, (r + h * (g - b)) * k), Math.max(0, (g + h * (b - r)) * k), Math.max(0, (b + h * (r - g)) * k)];
   };
 }
+
+// Natural, non-grid distribution: clusters of varied size and count with gaps, occasional singletons,
+// and patch-to-patch density from a noise field. next() -> {x, s, d} or null (rejected by density).
+export function clusterer(ctx, rng, d0, d1, bias = 1.2, { r: [r0, r1] = [0.6, 4], n: [n0, n1] = [2, 12], single = 0.15, patch = 19, seed = 7 } = {}) {
+  let left = 0, cx = 0, cs = 0, cr = 1;
+  return () => {
+    if (left <= 0) {
+      const p = spot(ctx, rng, d0, d1, bias);
+      cx = p.x; cs = p.s; cr = r0 + (r1 - r0) * Math.pow(rng(), 1.5);
+      left = rng() < single ? 1 : n0 + Math.floor(rng() * (n1 - n0 + 1));
+    }
+    left--;
+    const a = rng() * TAU, rr = cr * Math.sqrt(-Math.log(1 - rng() * 0.95)) * 0.6;
+    const x = cx + Math.cos(a) * rr, s = cs + Math.sin(a) * rr;
+    if (s < ctx.s0 || s >= ctx.s1) return null;
+    const dens = 0.25 + 0.75 * Math.min(1, Math.max(0, 0.5 + noise2(x / patch, s / patch, seed)));
+    if (rng() > dens) return null;
+    return { x, s, d: Math.abs(x - ctx.pathX(s)) };
+  };
+}
+import { noise2 } from '../noise.js';
 export const grey = (c, amt = 0.15) => tintFrom([c], amt);
 
 // Solid obstacle on the outside of a bend apex (b from bendSpots): reads dead ahead, camera curves past.
@@ -76,9 +106,10 @@ export function putBend(ctx, fs, batch, spec, b, rng) {
 // Dense low micro detail across the floor, including directly under the path.
 // list: [{ w, spec }] ; n attempts; d1 lateral range
 export function microDetail(ctx, fs, batch, rng, key, list, n, d1 = 30) {
+  const next = clusterer(ctx, rng, 0, d1, 1.25, { r: [0.4, 3], n: [2, 9], single: 0.25, patch: 13, seed: 41 });
   for (let k = 0; k < n; k++) {
-    const p = spot(ctx, rng, 0, d1, 1.25);
-    if (rng() > ctx.weightOf(p.s, key)) continue;
+    const p = next();
+    if (!p || rng() > ctx.weightOf(p.s, key)) continue;
     const e = pickW(rng, list);
     putFloor(ctx, fs, batch, e.spec, p.x, p.s, rng);
   }

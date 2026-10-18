@@ -1,8 +1,8 @@
 // Seagrass meadow: thousands of swaying blades as two instanced patch LODs (near / far), sandy gaps
 // from noise, plus shells, sea cucumbers, scallops, sand dollars, cushion stars and rocks.
-import { Builder, Batch, Inst, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, orient, budgetK, bendSpots } from './core.js';
+import { Builder, Batch, Inst, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, vary } from './core.js';
 import { grassPatch, seastar } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -63,11 +63,11 @@ function sandDollar(seed) {
 export function initSeagrass() {
   T.grassNear = [501, 503, 505].map((sd, i) => grassPatch(sd, { n: 14 + i * 2, r: 0.5 + i * 0.07, h: 0.55 + i * 0.15, w: 0.034 + i * 0.008, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] }));
   T.grassFar = [502, 504].map((sd, i) => grassPatch(sd, { n: 13 + i * 2, r: 0.9 + i * 0.1, h: 0.65 + i * 0.2, w: 0.055 + i * 0.01, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] }));
-  T.conch = [conch(1)];
-  T.cucumber = [cucumber(1), cucumber(2)];
-  T.scallop = [scallop(1)];
-  T.sandDollar = [sandDollar(1)];
-  T.cushion = [seastar(7, { fat: 0.9 })];
+  T.conch = vary([conch(1), conch(2)], 4, 11, { disp: 0.1 });
+  T.cucumber = vary([cucumber(1), cucumber(2), cucumber(3)], 3, 21, { disp: 0.12, bend: 0.25, twist: 0.4 });
+  T.scallop = vary([scallop(1), scallop(2)], 4, 31, { disp: 0.06, bend: 0.05 });
+  T.sandDollar = vary([sandDollar(1), sandDollar(2)], 3, 41, { disp: 0.04, bend: 0.04, twist: 0 });
+  T.cushion = [5, 6, 7, 8, 9].map((s) => seastar(s, { arms: 5, fat: 0.7 + (s % 3) * 0.25, curl: 0.02 }));
 }
 
 const S = {};
@@ -144,8 +144,10 @@ export function layoutSeagrassMisc(ctx) {
   const st = new Batch(MAT.static, 22000 * budgetK(ctx, 'seagrass'));
   for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'seagrass') * 0.7) putBend(ctx, fs, st, sp.bendRock, b, rng);
   microDetail(ctx, fs, st, rng, 'seagrass', sp.micro, 70, 26);
+  const nextP148 = clusterer(ctx, rng, 0, 30, 1.2);
   for (let k = 0; k < 110; k++) {
-    const p = spot(ctx, rng, 0, 30, 1.2);
+    const p = nextP148();
+    if (!p) continue;
     if (rng() > ctx.weightOf(p.s, 'seagrass')) continue;
     const e = pickW(rng, sp.list);
     putFloor(ctx, fs, st, sp[e.k], p.x, p.s, rng);

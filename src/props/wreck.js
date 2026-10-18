@@ -2,9 +2,9 @@
 // decks, broken masts / funnel / superstructure, portholes, rust & growth), optionally broken in two,
 // plus aircraft and submarine wrecks and debris fields. Set pieces are anchored per segment (seg.seed)
 // and built in the chunk that contains their largest s.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots, vary } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -151,8 +151,8 @@ function addMast(b, base, h, r, lean, rng, steel) {
 function buildShip(kind, seed, cutLo = 0, cutHi = 1) {
   const rng = mulberry32(seed), wood = kind === 'wood';
   const spec = wood
-    ? { L: 30, B: 8.5, D: 5.5, kind, seed, th: 0.18, nu: 40, holeThr: 0.86, cutLo, cutHi }
-    : { L: 46, B: 9.5, D: 7, kind, seed, th: 0.12, nu: 46, holeThr: 0.9, cutLo, cutHi };
+    ? { L: 26 + rng() * 9, B: 7.5 + rng() * 2, D: 4.8 + rng() * 1.6, kind, seed, th: 0.18, nu: 40, holeThr: 0.82 + rng() * 0.08, cutLo, cutHi }
+    : { L: 40 + rng() * 12, B: 8.5 + rng() * 2, D: 6.2 + rng() * 1.6, kind, seed, th: 0.12, nu: 46, holeThr: 0.86 + rng() * 0.07, cutLo, cutHi };
   const H = hullShape(spec), hole = holeFn(spec, rng), b = new Builder();
   const zA = spec.L / 2 - cutHi * spec.L, zB = spec.L / 2 - cutLo * spec.L, hr = Math.max(spec.B / 2, spec.D * 0.5);
   b.obs = [[0, spec.D * 0.5, Math.min(zA + hr * 0.7, (zA + zB) / 2), 0, spec.D * 0.5, Math.max(zB - hr * 0.7, (zA + zB) / 2), hr]];
@@ -162,7 +162,18 @@ function buildShip(kind, seed, cutLo = 0, cutHi = 1) {
   const zAt = (u) => spec.L / 2 - u * spec.L, inside = (u) => u > cutLo + 0.02 && u < cutHi - 0.02;
   if (wood) {
     for (const u of [0.3, 0.55, 0.78]) if (inside(u) && rng() < 0.85)
-      addMast(b, [0, H.keel(u) + 0.6, zAt(u)], H.sheer(u) - 0.6 + 1.5 + rng() * 7, 0.26, [(rng() - 0.5) * 0.4, (rng() - 0.5) * 0.3], rng, false);
+    {
+      const mh = H.sheer(u) - 0.6 + 1.5 + rng() * 7, lean = [(rng() - 0.5) * 0.4, (rng() - 0.5) * 0.3];
+      addMast(b, [0, H.keel(u) + 0.6, zAt(u)], mh, 0.26, lean, rng, false);
+      // rigging remnants: shrouds from the mast to the rails, some snapped
+      const top = [Math.sin(lean[0]) * mh, H.keel(u) + 0.6 + mh * Math.cos(lean[0]) * 0.92, zAt(u) + Math.sin(lean[1]) * mh];
+      for (let q = 0; q < 2 + Math.floor(rng() * 4); q++) {
+        const sd = q % 2 ? 1 : -1, rail = H.P(Math.min(spec.cutHi, Math.max(spec.cutLo, u + (rng() - 0.5) * 0.06)), 1, sd), cut = rng() < 0.4 ? 0.3 + rng() * 0.5 : 1;
+        const end = [lerp(top[0], rail[0], cut), lerp(top[1], rail[1], cut) - (cut < 1 ? 0.6 : 0), lerp(top[2], rail[2], cut)];
+        const mid = [(top[0] + end[0]) / 2, (top[1] + end[1]) / 2 - 0.25, (top[2] + end[2]) / 2];
+        b.tube([top, mid, end], [0.035, 0.035, 0.03], 3, (v, a, x, y, z, o) => { o[3] = 0.16; o[4] = 0.13; o[5] = 0.1; o[6] = 0.9; o[7] = 0; });
+      }
+    }
     if (inside(0.97)) addMast(b, [0, H.sheer(0.97) - 0.2, zAt(0.97)], 6, 0.18, [0, -1.0], rng, false); // bowsprit
     if (inside(0.08)) { // stern castle walls with dark windows
       const z = zAt(0.09), y = H.sheer(0.09);
@@ -386,17 +397,20 @@ function mastStump(seed) {
 
 export function initWreck() {
   T.ship = {
-    wood: [buildShip('wood', 11), buildShip('wood', 12)],
-    woodBow: [buildShip('wood', 13, 0.46, 1)], woodStern: [buildShip('wood', 14, 0, 0.5)],
-    steel: [buildShip('steel', 21)],
-    steelBow: [buildShip('steel', 23, 0.52, 1)], steelStern: [buildShip('steel', 24, 0, 0.55)],
+    wood: [11, 12, 15, 16].map((s) => buildShip('wood', s)),
+    woodBow: [buildShip('wood', 13, 0.46, 1), buildShip('wood', 17, 0.38, 1)], woodStern: [buildShip('wood', 14, 0, 0.5), buildShip('wood', 18, 0, 0.6)],
+    steel: [21, 22, 25].map((s) => buildShip('steel', s)),
+    steelBow: [buildShip('steel', 23, 0.52, 1), buildShip('steel', 26, 0.42, 1)], steelStern: [buildShip('steel', 24, 0, 0.55), buildShip('steel', 27, 0, 0.62)],
     plane: [airplane(31, false), airplane(32, true)],
     sub: [submarine(41)],
   };
   T.debris = {
-    barrel: [barrel(1, false)], drum: [barrel(2, true)], crate: [crate(1, false), crate(2, true)], cannon: [cannon(1)],
-    frag: [hullFragment(1, false), hullFragment(2, false)], fragSteel: [hullFragment(3, true), hullFragment(4, true)], mast: [mastStump(1), mastStump(2)],
-    anchor: [anchor(1)], chain: [chain(1), chain(2)], plank: [plank(1, false), plank(2, false)], plate: [plank(3, true), plank(4, true)],
+    barrel: vary([barrel(1, false)], 6, 71, { disp: 0.08, bend: 0.06, twist: 0.2 }), drum: vary([barrel(2, true)], 5, 72, { disp: 0.1, bend: 0.08 }),
+    crate: vary([1, 2, 3, 4].map((s) => crate(s, s % 2 === 0)), 2, 73, { disp: 0.03, bend: 0.05, twist: 0.1, smooth: false }),
+    cannon: vary([cannon(1)], 4, 74, { disp: 0.04, scale: 0.18, bend: 0.03, twist: 0 }),
+    frag: [1, 2, 5, 6].map((s) => hullFragment(s, false)), fragSteel: [3, 4, 7, 8].map((s) => hullFragment(s, true)), mast: [1, 2, 3, 4].map(mastStump),
+    anchor: vary([anchor(1)], 4, 75, { disp: 0.04, bend: 0.12, twist: 0.1, smooth: false }), chain: [1, 2, 3, 4, 5].map(chain),
+    plank: [1, 2, 5, 6].map((s) => plank(s, false)), plate: [3, 4, 7, 8].map((s) => plank(s, true)),
   };
 }
 
@@ -533,8 +547,10 @@ export function layoutWreck(ctx) {
       putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], x, s, rng);
     }
   }
+  const nextP551 = clusterer(ctx, rng, 0, 45, 1);
   for (let k = 0; k < 60; k++) {
-    const p = spot(ctx, rng, 0, 45, 1);
+    const p = nextP551();
+    if (!p) continue;
     if (rng() > ctx.weightOf(p.s, 'wreck')) continue;
     const e = pickW(rng, sp.sparse);
     putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 1 + sstep(5, 30, p.d));

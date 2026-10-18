@@ -1,5 +1,5 @@
 // Open ocean: rare rafts of drifting sargassum just beneath the surface (abyss stays empty).
-import { Builder, Batch, T, TAU, sat, orient, tubeClear, presence, rotY, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, sat, orient, tubeClear, presence, rotY, budgetK, vary } from './core.js';
 import { branchesInto } from './shapes.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
@@ -30,7 +30,7 @@ function sargassum(seed) {
   return b.build();
 }
 
-export function initPelagic() { T.sargassum = [1, 2, 3].map(sargassum); }
+export function initPelagic() { T.sargassum = vary([1, 2, 3, 4, 5, 6, 7, 8].map(sargassum), 2, 131, { disp: 0.1, bend: 0.1, twist: 0.6 }); }
 
 export function layoutPelagic(ctx) {
   if (presence(ctx, 'pelagic') <= 0) return null;

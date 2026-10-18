@@ -6,7 +6,7 @@ import { initMaterials } from './materials.js';
 import { rock, pebblePatch, algaePatch, rockSet, ROCK_TYPE_KEYS } from './shapes.js';
 import { initSandflat, layoutSandflat } from './sandflat.js';
 import { initReef, layoutReef, layoutReefMicro } from './reef.js';
-import { initKelp, layoutKelp } from './kelp.js';
+import { initKelp, layoutKelp, layoutKelpFloor } from './kelp.js';
 import { initSeagrass, layoutGrassNear, layoutGrassFar, layoutSeagrassMisc } from './seagrass.js';
 import { initCave, makeCaveLayout } from './cave.js';
 import { initWreck, layoutWreck } from './wreck.js';
@@ -63,6 +63,7 @@ export function registerProps(terrain, env) {
   add('reef', layoutReef);
   add('reefM', layoutReefMicro);
   add('kelp', layoutKelp);
+  add('kelpF', layoutKelpFloor);
   add('grassN', layoutGrassNear);
   add('grassF', layoutGrassFar);
   add('grassM', layoutSeagrassMisc);
@@ -79,7 +80,7 @@ export function registerProps(terrain, env) {
 // common names for the "i" overlay
 function nameAll() {
   const N = {
-    stag: 'Staghorn coral', table: 'Table coral', brain: 'Brain coral', boulder: 'Massive Porites coral', coralMound: 'Coral head',
+    coralMound: 'Coral head',
     fan: 'Gorgonian sea fan', tubeSp: 'Tube sponge', barrel: 'Giant barrel sponge', soft: 'Soft coral', leather: 'Leather coral',
     anem: 'Magnificent sea anemone', whip: 'Sea whip', clam: 'Giant clam', star: 'Sea star', urchin: 'Long-spined sea urchin',
     conch: 'Queen conch', cucumber: 'Sea cucumber', scallop: 'Scallop', sandDollar: 'Sand dollar', cushion: 'Cushion star',
@@ -89,9 +90,10 @@ function nameAll() {
     tpAnemGreen: 'Giant green anemone', tpAnemPink: 'Aggregating anemone', tpStar: 'Ochre sea star', tpUrchin: 'Purple sea urchin',
     tpMussel: 'California mussels', tpBarnacle: 'Acorn barnacles', tpSnail: 'Black turban snail', tpLettuce: 'Sea lettuce', tpTuft: 'Coralline algae', tpSurf: 'Surfgrass',
     keel: 'Ice keel', berg: 'Iceberg', brinicle: 'Brinicle', sargassum: 'Sargassum', seaPen: 'Sea pen', burrows: 'Garden eel burrows', tuft: 'Turtle grass',
-    rubble: 'Coral rubble', spongeLump: 'Encrusting sponge',
+    rubble: 'Coral rubble', spongeLump: 'Encrusting sponge', linckia: 'Blue sea star', cots: 'Crown-of-thorns starfish',
   };
-  for (const [k, n] of Object.entries(N)) if (T[k]) named(T[k], n);
+  const fill = (t, n) => { for (const x of Array.isArray(t) ? t : [t]) if (!x.label) x.label = n; };
+  for (const [k, n] of Object.entries(N)) if (T[k]) fill(T[k], n);
   const S = T.ship, D = T.debris;
   if (S) {
     named(S.wood, 'Galleon wreck'); named(S.woodBow, 'Galleon bow section'); named(S.woodStern, 'Galleon stern section');
@@ -100,6 +102,6 @@ function nameAll() {
   }
   if (D) {
     const DN = { barrel: 'Wooden cask', drum: 'Oil drum', crate: 'Cargo crate', cannon: 'Iron cannon', anchor: 'Anchor', chain: 'Anchor chain', plank: 'Ship timbers', plate: 'Hull plating', frag: 'Hull fragment', fragSteel: 'Steel hull fragment', mast: 'Broken mast' };
-    for (const [k, n] of Object.entries(DN)) if (D[k]) named(D[k], n);
+    for (const [k, n] of Object.entries(DN)) if (D[k]) fill(D[k], n);
   }
 }

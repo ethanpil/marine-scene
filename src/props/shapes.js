@@ -117,20 +117,33 @@ export function urchin(seed, { spines = 46, len = 1.3, body = [0.32, 0.26, 0.34]
   return b.build();
 }
 
-export function seastar(seed, { arms = 5, fat = 2.2, detail = 3 } = {}) {
-  const b = new Builder(), rot = (seed % 7) * 0.3;
+export function seastar(seed, { arms = 5, fat = 2.2, detail = 3, curl = 0.06, thin = 1, spines = 0, col = null } = {}) {
+  const b = new Builder(), rng = mulberry32(seed * 13 + arms), rot = rng() * TAU;
+  const armK = []; for (let k = 0; k < arms; k++) armK.push(rng() < 0.15 ? 0.45 + rng() * 0.35 : 0.85 + rng() * 0.3);
+  const cl = curl * (0.5 + rng());
   b.blob(detail, (x, y, z, o) => {
     const th = Math.atan2(z, x) + rot, h = Math.hypot(x, z);
+    const ai = (((Math.round((th * arms) / TAU) % arms) + arms) % arms);
     const arm = Math.pow(Math.abs(Math.cos((arms * th) / 2)), fat);
-    const R = 0.22 + 0.78 * arm;
+    const R = (0.22 + 0.78 * arm * armK[ai]) * (1 - 0.15 * (1 - thin));
     const rr = h * R;
-    const thick = 0.2 * (1 - 0.65 * rr) + 0.03;
+    const thick = (0.2 * (1 - 0.65 * rr) + 0.03) * thin;
     let py = y * thick; if (py < 0) py *= 0.35;
-    py += 0.06 * rr * rr + thick * 0.35;
-    o[0] = (x * R); o[1] = py; o[2] = (z * R);
+    py += cl * rr * rr * (1 + 0.6 * Math.sin(ai * 2.3 + seed)) + thick * 0.35;
+    o[0] = x * R; o[1] = py; o[2] = z * R;
     const ao = y < 0 ? 0.45 : 0.9 + 0.2 * arm;
-    o[3] = o[4] = o[5] = ao; o[6] = 0; o[7] = 2;
+    const c = col || [1, 1, 1];
+    o[3] = c[0] * ao; o[4] = c[1] * ao; o[5] = c[2] * ao; o[6] = 0; o[7] = 2;
   });
+  for (let k = 0; k < spines; k++) { // crown-of-thorns style spikes along the arms
+    const ai = k % arms, th = (ai / arms) * TAU - rot + (rng() - 0.5) * 0.25, r = 0.15 + rng() * 0.65 * armK[ai];
+    const base = [Math.cos(th) * r, 0.12 * (1 - 0.6 * r) + cl * r * r, Math.sin(th) * r];
+    const d = norm([Math.cos(th) * 0.3 + (rng() - 0.5) * 0.4, 1, Math.sin(th) * 0.3 + (rng() - 0.5) * 0.4]);
+    const p1 = perp(d, rng), p2 = cross(d, p1), w = 0.02, L = 0.07 + rng() * 0.06, v = [];
+    for (let q = 0; q < 3; q++) { const a = (q / 3) * TAU; v.push(b.v(base[0] + (p1[0] * Math.cos(a) + p2[0] * Math.sin(a)) * w, base[1], base[2] + (p1[2] * Math.cos(a) + p2[2] * Math.sin(a)) * w, d[0], d[1], d[2], 0.9, 0.85, 0.7, 0, 2)); }
+    const ap = b.v(base[0] + d[0] * L, base[1] + d[1] * L, base[2] + d[2] * L, d[0], d[1], d[2], 1.1, 1.0, 0.8, 0, 2);
+    for (let q = 0; q < 3; q++) b.t(v[q], v[(q + 1) % 3], ap);
+  }
   return b.build();
 }
 

@@ -1,9 +1,9 @@
 // Cenote caves: speleothems hanging from / rising to the rock, columns where floor and ceiling meet,
 // breakdown boulders, drowned trees beneath the sky openings, and soft animated light shafts.
 import * as THREE from 'three';
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, pointsClear, placedPoints, orient, rotY, rotZ, mul3, budgetK, bendSpots, TUBE } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, pointsClear, placedPoints, orient, rotY, rotZ, mul3, budgetK, bendSpots, TUBE, vary } from './core.js';
 import { branchesInto, stoneInto } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail, clusterer } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -38,14 +38,22 @@ function column(seed) {
   return b.build();
 }
 
+// low draped flowstone mound with rimstone ripples
+function flowstone(seed) {
+  const b = new Builder(), rng = mulberry32(seed * 3), R = 0.8 + rng() * 0.8, H = 0.4 + rng() * 0.6, rip = 14 + rng() * 14;
+  b.lathe(16, 8, (v) => [R * Math.pow(1 - v, 0.6) * (1 + 0.05 * Math.sin(v * rip)) + 0.02, H * Math.sin(v * Math.PI * 0.5)], (a, v) => 1 + 0.18 * vn3(Math.cos(a) * 1.5, v * 3, Math.sin(a) * 1.5, seed),
+    (v, a, x, y, z, o) => { const band = 0.8 + 0.25 * Math.sin(v * rip * 2 + a); o[3] = LIME[0] * band * 1.05; o[4] = LIME[1] * band; o[5] = LIME[2] * band * 0.9; o[6] = 0.1; o[7] = 2; });
+  const t = b.build(); t.label = 'Flowstone'; return t;
+}
+
 function deadTree(seed) {
-  const b = new Builder(), rng = mulberry32(seed);
+  const b = new Builder(), rng = mulberry32(seed * 7 + 3);
   const paint = (level, v, x, y, z, o) => { const c = 0.7 + 0.3 * vn3(x * 2, y * 2, z * 2, seed); o[3] = 0.28 * c; o[4] = 0.22 * c; o[5] = 0.16 * c; o[6] = 0.35; o[7] = 0; };
   branchesInto(b, rng, {
-    depth: 3, len: 2.4, rad: 0.2, radial: 6, segs: 3, kids: [2, 3], spread: 0.65, up: 0.05, wiggle: 0.25,
-    lenK: 0.62, radK: 0.6, tipK: 0.4, childAt: [0.5, 1], continueTrunk: false, paint,
+    depth: 2 + Math.floor(rng() * 2), len: 1.6 + rng() * 2, rad: 0.14 + rng() * 0.14, radial: 6, segs: 3, kids: [1, 2 + Math.floor(rng() * 2)], spread: 0.4 + rng() * 0.5, up: rng() * 0.12, wiggle: 0.15 + rng() * 0.35,
+    lenK: 0.5 + rng() * 0.25, radK: 0.6, tipK: 0.4, childAt: [0.35 + rng() * 0.3, 1], continueTrunk: false, paint,
   });
-  for (let k = 0; k < 5; k++) { // root plate
+  for (let k = 0, nr = 2 + Math.floor(rng() * 6); k < nr; k++) { // root plate
     const a = (k / 5) * TAU + rng();
     branchesInto(b, rng, {
       depth: 1, len: 0.9, rad: 0.11, radial: 5, segs: 2, kids: [1, 2], spread: 0.6, up: -0.15, wiggle: 0.3,
@@ -60,9 +68,11 @@ export function initCave() {
     stalactite(1, [[1, 0, 0, 1]]), stalactite(2, [[1, 0, 0, 1], [0.55, 0.12, 0.05, 0.7], [0.35, -0.08, 0.1, 0.6]]),
     stalactite(3, [[1, 0, 0, 1.2], [0.7, -0.15, -0.05, 0.8]]),
   ];
-  T.stalagmite = [1, 2, 3].map(stalagmite);
-  T.caveColumn = [1, 2].map(column);
-  T.deadTree = [1, 2].map(deadTree);
+  T.stalactite = vary([...T.stalactite, stalactite(4, [[1, 0, 0, 0.8], [0.8, 0.1, 0, 0.7], [0.6, 0.2, 0.02, 0.6], [0.4, 0.3, 0.03, 0.5]]), stalactite(5, [[1, 0, 0, 1.5]])], 3, 7, { disp: 0.12, bend: 0.08, twist: 0.5 });
+  T.stalagmite = vary([1, 2, 3, 4, 5].map(stalagmite), 3, 17, { disp: 0.15, bend: 0.1, twist: 0.5 });
+  T.flowstone = vary([1, 2, 3].map(flowstone), 3, 27, { disp: 0.1, twist: 0.6 });
+  T.caveColumn = vary([1, 2, 3].map(column), 2, 37, { disp: 0.1, bend: 0.06, twist: 0.6 });
+  T.deadTree = vary([1, 2, 3, 4, 5, 6].map(deadTree), 2, 47, { disp: 0.05, bend: 0.15, twist: 0.4 });
   const b = new Builder(); stoneInto(b, { sx: 1.6, sy: 0.9, sz: 1.2, p: 4, rough: 0.12, seed: 5, detail: 2, col: LIME, growth: 0.2, mode: 2 });
   b.xform(0, [1, 0, 0, 0, 1, 0, 0, 0, 1], 0, 0.4, 0); T.block = [b.build()];
 }
@@ -74,6 +84,7 @@ function specs() {
     rock: { tpl: [...T.rocks, ...T.block], scale: [0.5, 2.2], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.6, tint: tintFrom([[0.62, 0.58, 0.5], [0.5, 0.48, 0.44]]) },
     pebbles: { tpl: T.pebbles, scale: [0.8, 1.7], follow: 1, sink: 0.02, tint: tintFrom([[0.85, 0.8, 0.7], [0.75, 0.72, 0.66]], 0.08) },
     grit: { tpl: T.rubble, scale: [0.8, 1.5], follow: 1, sink: 0.02, tint: tintFrom([[0.8, 0.77, 0.7]], 0.08) },
+    flow: { tpl: T.flowstone, scale: [0.7, 1.6], follow: 0.7, sink: 0.1, tint: tintFrom([[1, 1, 1], [1.05, 0.95, 0.85]], 0.12) },
     mite: { tpl: T.stalagmite, scale: [0.6, 2.6], ys: [0.6, 1.4], follow: 0.15, tint: tintFrom([[1, 1, 1]]) },
   });
   S.micro = [{ w: 2, spec: S.pebbles }, { w: 1.4, spec: S.grit }];
@@ -190,8 +201,10 @@ export function makeCaveLayout(env) {
       }
     }
     // stalactites from real ceiling (not in openings)
+    const nextP205 = clusterer(ctx, rng, 3.5, 24, 0.9);
     for (let k = 0; k < 280; k++) {
-      const p = spot(ctx, rng, 3.5, 24, 0.9);
+      const p = nextP205();
+      if (!p) continue;
       if (rng() > ctx.weightOf(p.s, 'cave')) continue;
       const c = ctx.ceilingAt(p.x, p.s);
       if (c > ctx.surfaceY - 0.4) continue;
@@ -224,11 +237,13 @@ export function makeCaveLayout(env) {
     }
     microDetail(ctx, fs, st, rng, 'cave', sp.micro, 110, 20);
     // stalagmites and breakdown boulders on the floor (low ones also under the path)
+    const nextP239 = clusterer(ctx, rng, 0, 24, 1);
     for (let k = 0; k < 170; k++) {
-      const p = spot(ctx, rng, 0, 24, 1);
+      const p = nextP239();
+      if (!p) continue;
       if (rng() > ctx.weightOf(p.s, 'cave')) continue;
       const c = ctx.ceilingAt(p.x, p.s);
-      const spec = c < ctx.surfaceY - 0.4 && rng() < 0.55 ? sp.mite : sp.rock;
+      const r = rng(), spec = c < ctx.surfaceY - 0.4 && r < 0.5 ? sp.mite : r < 0.68 ? sp.flow : sp.rock;
       putFloor(ctx, fs, st, spec, p.x, p.s, rng);
     }
     st.split = 2;
