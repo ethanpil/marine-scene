@@ -117,6 +117,7 @@ export class Terrain {
     const chunk = { idx, s0, group: new THREE.Group(), floor: null, ceil: null, props: [] };
     chunk.group.position.set(0, 0, -s0);
     chunk.floor = new THREE.Mesh(this._gridGeometry(hf, rows, x0, NX, false), this.floorMat);
+    chunk.floor.receiveShadow = !!this.shadows;
     chunk.group.add(chunk.floor);
     yield;
     if (anyCeil && minCeil < U.uSurfaceY.value + 0.5) {
@@ -133,7 +134,10 @@ export class Terrain {
       if (this.chunks.get(idx) !== chunk) return; // chunk was unloaded mid-build
       try {
         const r = pop(ctx);
-        if (r && r.object) { chunk.group.add(r.object); chunk.props.push(r); }
+        if (r && r.object) {
+          if (this.shadows) r.object.traverse((o) => { if (o.isMesh && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
+          chunk.group.add(r.object); chunk.props.push(r);
+        }
       } catch (e) { console.error('populator failed', e); }
     }
   }
@@ -201,7 +205,7 @@ export class Terrain {
           cr += (sr + (rr - sr) * rocky) * e.w;
           cg += (sg + (rg - sg) * rocky) * e.w;
           cb += (sb + (rb - sb) * rocky) * e.w;
-          rip += (e.key === 'pelagic' || e.key === 'abyss' || e.key === 'vents' || e.key === 'tidepool' ? 0.2 : 1) * e.w;
+          rip += (e.key === 'pelagic' || e.key === 'abyss' || e.key === 'vents' || e.key === 'tidepool' ? 0.2 : e.key === 'sandflat' ? 1.6 : 1) * e.w;
         }
         const v = 0.9 + 0.2 * nn;
         col[k * 3] = cr * ao * v; col[k * 3 + 1] = cg * ao * v; col[k * 3 + 2] = cb * ao * v;

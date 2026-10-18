@@ -31,6 +31,9 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 renderer.info.autoReset = false;
 
+const SHADOWS = tier === 'high' && qs.get('shadows') !== '0';
+renderer.shadowMap.enabled = SHADOWS;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 1400);
 scene.add(camera);
@@ -43,11 +46,22 @@ const caustics = new Caustics(512);
 const sun = new THREE.DirectionalLight(0xffffff, 2.5);
 const hemi = new THREE.HemisphereLight(0x88ccff, 0x0a2030, 1.0);
 scene.add(sun, sun.target, hemi);
+if (SHADOWS) {
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  const sc = sun.shadow.camera;
+  sc.left = -48; sc.right = 48; sc.top = 48; sc.bottom = -48; sc.near = 1; sc.far = 260;
+  sun.shadow.radius = 4;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.06;
+  sun.shadow.intensity = 0.8;
+}
 
 const seq = new BiomeSequence(SEED, qs.get('biome') || 'reef');
 const shape = new WorldShape(seq);
 const terrain = new Terrain(world, shape, seq);
-const env = { shape, seq, world, scene, camera, renderer, U, BIOMES, seed: SEED };
+terrain.shadows = SHADOWS;
+const env = { shape, seq, world, scene, camera, renderer, U, BIOMES, seed: SEED, shadows: SHADOWS };
 registerProps(terrain, env);
 const creatures = new Creatures(world, env);
 
@@ -108,7 +122,7 @@ const captionEl = document.getElementById('caption');
 let showCaptions = qs.get('captions') !== '0', lastSegId = -1, captionTimer = 0;
 const SUBTITLES = {
   reef: 'shallow tropical reef', kelp: 'temperate forest of giant kelp', seagrass: 'sunlit meadow',
-  pelagic: 'the blue — open water', cave: 'flooded limestone passages', wreck: 'graveyard of ships',
+  pelagic: 'the blue — open water', sandflat: 'rippled plains of rays and garden eels', cave: 'flooded limestone passages', wreck: 'graveyard of ships',
   ruins: 'a drowned civilisation', vents: 'black smokers of the deep', tidepool: 'where the sea meets the shore',
   abyss: 'the midnight zone', polar: 'beneath the sea ice',
 };
@@ -163,12 +177,11 @@ function updateEnvironment(time) {
   U.uAmbientScale.value = p.ambient;
   U.uGlow.value = p.glow;
   U.uLamp.value = Math.max(smoothstep(0.45, 0.08, p.sun), seq.weightOf(s + 10, 'cave') * 0.55);
-  sun.color.copy(sunCol); sun.intensity = 2.0 * p.sun;
-  sun.position.copy(camera.position).addScaledVector(U.uSunDir.value, 50);
-  sun.target.position.copy(camera.position);
+  sun.color.copy(sunCol); sun.intensity = 3.0 * p.sun;
+  placeSun();
   hemi.color.setRGB(...p.up).multiplyScalar(1.6);
   hemi.groundColor.setRGB(...p.deep).multiplyScalar(0.5);
-  hemi.intensity = 1.1 * p.ambient;
+  hemi.intensity = 0.7 * p.ambient;
   U.uCamPos.value.copy(camera.position);
   { // approximate lit seabed colour for the surface's mirror reflection
     let r = 0, g = 0, b = 0;
@@ -177,9 +190,27 @@ function updateEnvironment(time) {
     U.uFloorCol.value.setRGB(r * l * Math.exp(-p.lightSigma[0] * depth * 2), g * l * Math.exp(-p.lightSigma[1] * depth * 2), b * l * Math.exp(-p.lightSigma[2] * depth * 2));
   }
   post.params.shafts = p.shafts * p.sun;
+  post.params.softStart = 0.45 / p.sigma[1];
+  post.params.softEnd = 2.8 / p.sigma[1];
   post.params.depth = depth;
   post.params.exposure = 1 + 1.4 * p.glow + 0.4 * (1 - Math.min(1, p.sun));
   snow.setDensity(p.snow, p.glow);
+}
+
+// Shadow frustum follows the camera (centred ~32 m ahead), snapped to shadow texels to avoid shimmer.
+const sunU = new THREE.Vector3(), sunV = new THREE.Vector3(), sunC = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+function placeSun() {
+  const L = U.uSunDir.value;
+  sunC.copy(camera.position).addScaledVector(camState.forward, 32);
+  if (SHADOWS) {
+    const texel = 96 / 2048;
+    sunU.crossVectors(L, UP).normalize(); sunV.crossVectors(sunU, L);
+    const cu = Math.round(sunC.dot(sunU) / texel) * texel, cv = Math.round(sunC.dot(sunV) / texel) * texel, cl = sunC.dot(L);
+    sunC.copy(sunU).multiplyScalar(cu).addScaledVector(sunV, cv).addScaledVector(L, cl);
+  }
+  sun.target.position.copy(sunC);
+  sun.position.copy(sunC).addScaledVector(L, 130);
+  sun.target.updateMatrixWorld();
 }
 
 // ---------- adaptive resolution ----------

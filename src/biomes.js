@@ -38,6 +38,16 @@ export const BIOMES = {
       return fbm2(x / 25, s / 25, 3, 31) * 0.8 + smoothstep(40, 95, ad) * 3;
     },
   },
+  sandflat: {
+    label: 'Sand Flats', camY: -7, clearance: 3.0, len: [550, 850], weight: 0.9,
+    sigma: [0.1, 0.032, 0.03], lightSigma: [0.045, 0.016, 0.014],
+    deep: C(0x0f6f93), up: C(0x6fd6ee), sun: 1.15, caustic: 1.3, shafts: 1.0, ambient: 1.05, glow: 0, snow: 0.5,
+    sand: [0.9, 0.84, 0.7], rock: [0.6, 0.55, 0.48],
+    floor(x, s, ad) {
+      const dune = Math.sin(s * 0.11 + x * 0.04 + noise2(x / 30, s / 30, 121) * 3) * 0.45;
+      return fbm2(x / 40, s / 40, 3, 122) * 1.4 + dune + smoothstep(60, 120, ad) * 4;
+    },
+  },
   pelagic: {
     label: 'Open Ocean', camY: -16, clearance: 260, len: [700, 1100], weight: 1.1,
     sigma: [0.085, 0.024, 0.016], lightSigma: [0.04, 0.014, 0.01],
@@ -191,7 +201,10 @@ export class BiomeSequence {
 // ---------- World shape: path, floor, ceiling ----------
 export class WorldShape {
   constructor(seq) { this.seq = seq; }
-  pathX(s) { return 30 * noise1(s / 260, 3) + 9 * noise1(s / 85, 5); }
+  pathX(s) { return 30 * noise1(s / 260, 3) + 9 * noise1(s / 85, 5) + 3.5 * noise1(s / 38, 9); }
+  // Signed lateral curvature d2x/ds2 (+ = bending toward +x). Tall obstacles placed on the
+  // OUTSIDE of a bend (offset opposite the sign) appear dead ahead and the camera curves around them.
+  pathCurv(s) { const e = 6; return (this.pathX(s + e) - 2 * this.pathX(s) + this.pathX(s - e)) / (e * e); }
   pathY(s) {
     let y = 0, amp = 0;
     for (const e of this.seq.weights(s)) { y += BIOMES[e.key].camY * e.w; }

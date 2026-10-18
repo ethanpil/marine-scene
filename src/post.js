@@ -16,7 +16,7 @@ export class Post {
   constructor(renderer, scene, camera, opts = {}) {
     this.renderer = renderer; this.scene = scene; this.camera = camera;
     this.opts = Object.assign({ msaa: 4, shaftDiv: 2, shaftSteps: 24 }, opts);
-    this.params = { shafts: 1, depth: 10, exposure: 1 };
+    this.params = { shafts: 1, depth: 10, exposure: 1, softStart: 12, softEnd: 70 };
     this.quadScene = new THREE.Scene();
     this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
@@ -136,14 +136,17 @@ export class Post {
     });
     this.compMat = new THREE.ShaderMaterial({
       uniforms: {
-        tScene: { value: null }, tShafts: { value: null }, tBloom: { value: null },
+        tScene: { value: null }, tShafts: { value: null }, tBloom: { value: null }, tSoft: { value: null }, tDepth: { value: null },
+        uNear: { value: 0.1 }, uFar: { value: 1400 }, uSoft: { value: new THREE.Vector2(12, 70) },
         uShaftTexel: { value: new THREE.Vector2() }, uExposure: { value: 1 }, uTime: { value: 0 },
         uWaterDeep: U.uWaterDeep, uAspect: { value: 1 },
       },
       vertexShader: QUAD_VERT,
       fragmentShader: /* glsl */`
         varying vec2 vUv;
-        uniform sampler2D tScene, tShafts, tBloom;
+        uniform sampler2D tScene, tShafts, tBloom, tSoft, tDepth;
+        uniform float uNear, uFar;
+        uniform vec2 uSoft;
         uniform vec2 uShaftTexel;
         uniform float uExposure, uTime, uAspect;
         uniform vec3 uWaterDeep;
@@ -163,6 +166,13 @@ export class Post {
           col.r = texture2D(tScene, uv - ca).r;
           col.g = texture2D(tScene, uv).g;
           col.b = texture2D(tScene, uv + ca).b;
+          // turbidity softening: distant detail dissolves into the water
+          {
+            float zd = texture2D(tDepth, uv).x * 2.0 - 1.0;
+            float vz = 2.0 * uNear * uFar / (uFar + uNear - zd * (uFar - uNear));
+            float k = smoothstep(uSoft.x, uSoft.y, vz) * 0.6;
+            col = mix(col, texture2D(tSoft, uv).rgb, k);
+          }
           vec3 sh = texture2D(tShafts, uv).rgb * 0.2;
           sh += texture2D(tShafts, uv + uShaftTexel * vec2(2.5, 1.0)).rgb * 0.1;
           sh += texture2D(tShafts, uv - uShaftTexel * vec2(2.5, 1.0)).rgb * 0.1;
@@ -196,7 +206,7 @@ export class Post {
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     const w = Math.max(2, size.x | 0), h = Math.max(2, size.y | 0);
     if (this.sceneRT) {
-      this.sceneRT.dispose(); this.shaftRT.dispose(); this.shaftRT2.dispose();
+      this.sceneRT.dispose(); this.shaftRT.dispose(); this.shaftRT2.dispose(); this.softA.dispose(); this.softB.dispose();
       for (const t of this.mips) t.dispose();
     }
     this.sceneRT = rt(w, h, { depthBuffer: true, samples: this.opts.msaa });
@@ -205,6 +215,8 @@ export class Post {
     this.shaftRT = rt(Math.ceil(w / d), Math.ceil(h / d));
     this.shaftRT2 = rt(Math.ceil(w / d), Math.ceil(h / d));
     this.histValid = false;
+    this.softA = rt(Math.ceil(w / 2), Math.ceil(h / 2));
+    this.softB = rt(Math.ceil(w / 4), Math.ceil(h / 4));
     this.mips = [];
     let mw = w, mh = h;
     for (let i = 0; i < 6; i++) { mw = Math.max(1, Math.ceil(mw / 2)); mh = Math.max(1, Math.ceil(mh / 2)); this.mips.push(rt(mw, mh)); }
@@ -263,7 +275,19 @@ export class Post {
       r.autoClear = true;
     }
 
+    // quarter-res blurred copy of the scene for distance softening
+    this.downMat.uniforms.tSrc.value = this.sceneRT.texture;
+    this.downMat.uniforms.uTexel.value.set(1 / this.w, 1 / this.h);
+    this._pass(this.downMat, this.softA);
+    this.downMat.uniforms.tSrc.value = this.softA.texture;
+    this.downMat.uniforms.uTexel.value.set(1 / this.softA.width, 1 / this.softA.height);
+    this._pass(this.downMat, this.softB);
+
     const cu = this.compMat.uniforms;
+    cu.tSoft.value = this.softB.texture;
+    cu.tDepth.value = this.sceneRT.depthTexture;
+    cu.uNear.value = cam.near; cu.uFar.value = cam.far;
+    cu.uSoft.value.set(this.params.softStart, this.params.softEnd);
     cu.tScene.value = this.sceneRT.texture;
     cu.tShafts.value = this.shaftRT.texture;
     cu.tBloom.value = m[0].texture;
