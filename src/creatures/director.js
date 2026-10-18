@@ -257,11 +257,11 @@ export class Director {
       }
       case 'kelp-clearing': // sea lions playing: looping and corkscrewing around the clearing
         return !!this.spawnAt('seaLion', p, { kind: 'pod', route: 'circle', zone: 'mid', n: 2 + Math.floor(r() * 3), spacing: 0.5,
-          orbit: { x: p.x, s: p.s, y: Math.min(p.y, -2), r: rr(4, 6), w: rr(0.35, 0.5), a0: r() * TAU, T: rr(40, 60) } });
-      case 'iceberg': { // penguins (south) or belugas (north) circling the berg
+          orbit: { x: p.x, s: p.s, y: Math.min(p.y, -2), r: Math.max(rr(4, 6), this.extentAt(p, 6) + 2), w: rr(0.35, 0.5), a0: r() * TAU, T: rr(40, 60) } });
+      case 'iceberg': { // penguins (south) or belugas (north) circling the berg, clear of its underwater bulk
         const south = this.hemi(this.region(p.s)) === 'S';
         return !!this.spawnAt(south ? (r() < 0.6 ? 'adeliePenguin' : 'emperorPenguin') : 'beluga', p, { kind: 'pod', route: 'circle', zone: 'mid',
-          orbit: { x: p.x, s: p.s, y: -2.5, r: (p.r || 6) + rr(3, 6), w: rr(0.25, 0.4), a0: r() * TAU, T: rr(40, 70) } });
+          orbit: { x: p.x, s: p.s, y: -2.5, r: this.extentAt(p) + rr(3, 6), w: rr(0.25, 0.4), a0: r() * TAU, T: rr(40, 70) } });
       }
       case 'garden-eel-field':
         return !!this.spawnAt(r() < 0.7 ? 'gardenEel' : 'splendidEel', p, { kind: 'colony' });
@@ -282,6 +282,20 @@ export class Director {
         return !!this.spawnAt(r() < 0.5 ? 'moray' : 'spotMoray', p, { kind: 'peek' });
       default: return false;
     }
+  }
+
+  // Horizontal reach of the obstacles making up a set piece (e.g. an iceberg's underwater bulk) around its POI.
+  extentAt(p, maxR = 40) {
+    const reg = this.sys.env && this.sys.env.obstacles;
+    let ext = p.r || 6;
+    if (!reg || !reg.count) return ext;
+    const q = reg.query(p.x, p.s, Math.min(maxR, (p.r || 6) * 2 + 10), this._qe || (this._qe = []));
+    for (const o of q) {
+      const da = Math.hypot(o.ax - p.x, o.as - p.s), db = Math.hypot(o.bx - p.x, o.bs - p.s);
+      if (Math.min(da, db) - o.r > (p.r || 6) * 1.5 + 4) continue; // something else nearby
+      ext = Math.max(ext, da + o.r, db + o.r);
+    }
+    return Math.min(ext, maxR);
   }
 
   // Remoras riding sharks, mantas, whale sharks and turtles.
@@ -338,6 +352,7 @@ export class Director {
       if (plan) {
         const sh = sys.shape, s0 = c.s + 60, x0 = sh.pathX(s0) + (r() < 0.5 ? -1 : 1) * (4 + r() * 6);
         const y0 = Math.max(sh.floorAt(x0, s0) + 9, sh.pathY(s0) - 16);
+        if (sh.ceilingAt(x0, s0) < -0.5) { cool.net = now; return; } // only in open water (not under the ice)
         Object.assign(plan, { n: 2 + Math.floor(r() * 2), kind: 'pod', spacing: 0.35, route: 'lunge', zone: 'mid', s0, l0: x0 - sh.pathX(s0), h0: y0 - sh.pathY(s0), fadeIn: true, interest: 1 });
         if (plan.n <= sys.maxInstances - sys.instances) {
           const h = sys.spawn(sp, plan);

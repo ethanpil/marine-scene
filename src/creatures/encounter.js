@@ -10,6 +10,14 @@ import { Obstacles } from '../obstacles.js';
 const _n = { x: 0, y: 0, s: 0 };
 const _hit = { nx: 0, ny: 1, nz: 0 };   // outward normal of the closest obstacle (render-relative x, y, z)
 const _push = { x: 0, y: 0, z: 0 };     // accumulated de-penetration vector
+const DIRS = (() => { // 26 unit directions (cube faces, edges, corners), upward ones first
+  const d = [];
+  for (const y of [1, 0, -1]) for (const x of [0, 1, -1]) for (const z of [0, 1, -1]) {
+    if (!x && !y && !z) continue;
+    const l = Math.hypot(x, y, z); d.push(x / l, y / l, z / l);
+  }
+  return d;
+})();
 const _q = [];
 // coarse bounds per obstacle (cached on the object) for cheap rejection before the exact distance
 function obsBox(o) {
@@ -117,7 +125,7 @@ export class Encounter {
     this.walk = null; this.herdX = 0; this.herdZ = 0; this.alarmR = 0; this.wf = 0; this.den = false; this.perched = null; this.perchY = null;
     this.host = null; this.HI = null; this.LOC = null; this._cx = 0; this._cy = 0; this._cz = 0; this._label = null;
     this.recheck = false; this.recheckT = 0; this.unseen = 0; this.swirling = false; this.lFloor = 0; this.lCeil = 0; this.openWater = false;
-    this.dist = 0; this._mUp = false; this._aUp = false; this.obsValid = false;
+    this.dist = 0; this._mUp = false; this._aUp = false; this.obsValid = false; this.orbR = 0;
     const rng = mulberry32(plan.seed);
     this.rng = rng; this.sys = sys; this.sp = sp; this.plan = plan;
     const beh = sp.beh, n = plan.n;
@@ -213,6 +221,9 @@ export class Encounter {
     this.mot = sp.mot; this.browse = !!beh.browse;
     // per-agent hot paths read these instead of the (differently shaped) species / plan objects
     this.calf = !!plan.calf; this.dart = !!beh.dart; this.cork = !!beh.corkscrew; this.latMax = plan.latMax ?? 80; this.l0 = plan.l0 ?? 0;
+    // fast movers check obstacles every frame (no staggered look-ahead, no coasting near obstacles) and are
+    // clamped under the ceiling (ice, cave roofs) every frame
+    this.fast = (beh.speed ? beh.speed[1] : 0) >= 1.8 || beh.zone === 'surface' || beh.zone === 'ceiling';
     this.glides = mot.mode !== 4 && sp.plan !== 'octopus' && this.kind !== 'bait' && this.kind !== 'mill';
     for (let i = 0; i < n; i++) {
       // realistic size spread with occasional juveniles and big adults
@@ -256,6 +267,7 @@ export class Encounter {
   _init(plan) {
     const { sys, n, rng, sp } = this, sh = sys.shape, beh = sp.beh;
     let s0 = plan.s0, x0 = sh.pathX(s0) + plan.l0;
+    if (plan.orbit) { const O = plan.orbit, a = O.a0 ?? 0; s0 = O.s + Math.sin(a) * O.r; x0 = O.x + Math.cos(a) * O.r; plan.h0 = O.y - sh.pathY(s0); plan.l0 = x0 - sh.pathX(s0); }
     this.zone = plan.zone || beh.zone || 'mid';
     if (this.zone === 'floor' && sh.pathY(s0) - sh.floorAt(x0, s0) > 30) this.zone = 'mid';
     if ((this.kind === 'shoal' || this.kind === 'hover') && this.zone === 'floor' && !plan.noSeek) {
@@ -291,6 +303,7 @@ export class Encounter {
     if (FLOCK_KINDS.has(kind)) {
       const spacing = size * (kind === 'pod' ? 2.6 : kind === 'solo' ? 1.5 : kind === 'bait' ? 2.0 : 1.9) * (kind === 'bait' ? 1 : this.moodSpacing) * (plan.spacing ?? 1);
       const FORM = { ellipsoid: [0.85, 0.42, 1.4], ball: [0.8, 0.8, 0.8], ribbon: [0.35, 0.3, 2.6], wall: [2.0, 1.1, 0.3], loose: [1.6, 0.7, 2.1], column: [0.5, 2.2, 0.5] };
+      const iceAbove = sh.hasCeiling(s0);
       const fm = FORM[plan.formation] || FORM.ellipsoid;
       const R = spacing * Math.cbrt(n) * (kind === 'bait' ? 0.75 : 0.95);
       this.R = R;
@@ -317,6 +330,10 @@ export class Encounter {
         const t = this._slotTarget(i, 0);
         P[i * 3] = t[0] + (rng() - 0.5) * size; P[i * 3 + 1] = t[1]; P[i * 3 + 2] = t[2] + (rng() - 0.5) * size;
         if (plan.calf) { P[i * 3] = t[0]; P[i * 3 + 2] = t[2]; }
+        if (iceAbove) { // start under the ice / cave roof, never inside it
+          const top = Math.min(sh.ceilingAt(P[i * 3], -(P[i * 3 + 2] + this.anchorZ)), 0) - this.SZ[i] * Math.max(-this.entry.minY, 0.04) - 0.06;
+          if (P[i * 3 + 1] > top) P[i * 3 + 1] = top;
+        }
         const hx = kind === 'bait' || kind === 'mill' ? -Math.sin(SL[o + 1]) : this.cvx, hz = kind === 'bait' || kind === 'mill' ? Math.cos(SL[o + 1]) : this.cvz;
         F[i * 3] = hx; F[i * 3 + 1] = 0; F[i * 3 + 2] = hz;
         V[i * 3] = hx * this.speed; V[i * 3 + 2] = hz * this.speed;
@@ -487,7 +504,7 @@ export class Encounter {
     const cs = 4, nn = Math.min(16, Math.ceil((2 * R) / cs));
     G.n = nn; G.cs = (2 * R) / nn; G.x0 = b.x - R; G.s0 = bs - R;
     for (let k = 0; k < nn * nn; k++) { if (G.cells[k]) G.cells[k].length = 0; else G.cells[k] = []; }
-    const m = 2 + this.rbU * this.baseSize;
+    const m = 2.2 + this.rbU * this.baseSize * 1.5 + (this.elong ? this.baseSize * 0.5 : 0); // whole body (big adults, head and tail) + the 1.8 m test horizon
     for (const o of obs) {
       const bb = obsBox(o);
       const i0 = Math.max(0, Math.floor((bb[0] - m - G.x0) / G.cs)), i1 = Math.min(nn - 1, Math.floor((bb[1] + m - G.x0) / G.cs));
@@ -512,7 +529,7 @@ export class Encounter {
     for (let k = el ? -1 : 0; k <= (el ? 1 : 0); k++) {
       const off = k === 1 ? half : k === -1 ? -half * 0.85 : 0, rr = k === 0 ? rb : rb * 0.75;
       const qx = px + F[i3] * off, qy = py + F[i3 + 1] * off + yo, qz = pz + F[i3 + 2] * off, qs = -(qz + this.anchorZ);
-      const m = rr + 1.5;
+      const m = rr + 1.8; // looks 1.8 m out: "nothing found" means a clearance of at least 1.8 m
       for (let j = 0; j < list.length; j++) {
         const o = list[j], bb = o._bb || obsBox(o);
         if (qx < bb[0] - m || qx > bb[1] + m || qy < bb[2] - m || qy > bb[3] + m || qs < bb[4] - m || qs > bb[5] + m) continue;
@@ -531,23 +548,41 @@ export class Encounter {
   }
   // Last-resort correction (steering looks ahead, so this is rare): move out by the sum of all
   // penetration vectors of the body spheres (resolves bodies wedged between several rocks at once).
-  _pushOut(i, P, V) { // returns false if the body could not be freed
+  _pushOut(i, P, V, top = Infinity) { // returns false if the body could not be freed; `top`: highest allowed centre (ice / roof)
     const i3 = i * 3, L = this._obsList(P[i3], P[i3 + 2]);
     if (!L.length) return true;
     // cheap early-out: if the centre sphere clears by more than the half length, no part of the body can touch
-    if (this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 1, L) > (this.elong ? this.SZ[i] * 0.45 : 0) + 0.02) return true;
+    // (_clear only looks 1.8 m out, so a big body's head or tail can touch while its centre reads "clear")
+    if (Math.min(this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 1, L), 1.8) > (this.elong ? this.SZ[i] * 0.45 : 0) + 0.02) return true;
     for (let it = 0; it < 16; it++) {
       const d = this._depen(i, P[i3], P[i3 + 1], P[i3 + 2], L);
       if (d >= 0) return true;
       let px = _push.x * 1.25, py = _push.y * 1.25, pz = _push.z * 1.25; // slight over-relaxation: wedges converge faster
-      if (px * px + py * py + pz * pz < 1e-8) { px = 0; py = -d + 0.01; pz = 0; } // pushes cancel out: escape upward
+      if (px * px + py * py + pz * pz < 1e-8) { if (top < 1e9) return false; px = 0; py = -d + 0.01; pz = 0; } // pushes cancel out: escape upward
       P[i3] += px; P[i3 + 1] += py; P[i3 + 2] += pz;
+      if (P[i3 + 1] > top) { py -= P[i3 + 1] - top; P[i3 + 1] = top; } // squeezed against the ice: slide sideways instead
       if (V) {
         const pl = h3(px, py, pz) || 1, nx = px / pl, ny = py / pl, nz = pz / pl, vn = V[i3] * nx + V[i3 + 1] * ny + V[i3 + 2] * nz;
         if (vn < 0) { V[i3] -= vn * nx; V[i3 + 1] -= vn * ny; V[i3 + 2] -= vn * nz; }
       }
     }
     return this._depen(i, P[i3], P[i3 + 1], P[i3 + 2], L) >= 0;
+  }
+  // After an undone step: if even the previous spot is inside something (it was registered on top of the
+  // animal), jump to the nearest free spot in the water (search shells of increasing radius).
+  _unstick(i) {
+    const reg = this.sys.env && this.sys.env.obstacles, P = this.P, i3 = i * 3;
+    if (!reg || !reg.count) return;
+    const x0 = P[i3], y0 = P[i3 + 1], z0 = P[i3 + 2], az = this.anchorZ, sh = this.sys.shape;
+    reg.query(x0, -(z0 + az), 14, _q);
+    if (this._clear(i, x0, y0, z0, 3, _q) >= 0) return;
+    for (let r = 0.5; r <= 12; r += 0.5) {
+      for (let k = 0; k < DIRS.length; k += 3) {
+        const x = x0 + DIRS[k] * r, y = y0 + DIRS[k + 1] * r, z = z0 + DIRS[k + 2] * r, s = -(z + az);
+        if (y < sh.floorAt(x, s) + 0.2 || y > Math.min(sh.ceilingAt(x, s), 0) - this.SZ[i] * Math.max(-this.entry.minY, 0.04) - 0.15) continue;
+        if (this._clear(i, x, y, z, 3, _q) >= 0.02) { P[i3] = x; P[i3 + 1] = y; P[i3 + 2] = z; this.CLR[i] = 0; return; }
+      }
+    }
   }
   // A walker inside a rock (one was registered on top of it): move to the nearest free patch of floor.
   _escape(i) {
@@ -777,9 +812,11 @@ export class Encounter {
     if (this.route === 'circle') {
       // slow banked circles around a fixed point (mantas over a cleaning station)
       const O = this.plan.orbit;
-      this.orbA = (this.orbA ?? O.a0 ?? 0) + O.w * dt;
-      const s1 = O.s + Math.sin(this.orbA) * O.r;
-      this.ls = s1; this.ll = O.x + Math.cos(this.orbA) * O.r - sh.pathX(s1);
+      if (!this.orbR) this.orbR = O.r;
+      if (this.lbd !== undefined && this.lbd < 1.5) this.orbR = Math.min(this.orbR + (1.5 - this.lbd) * dt * 2, O.r * 1.35 + 4); // widen around the berg / rocks
+      this.orbA = (this.orbA ?? O.a0 ?? 0) + O.w * O.r / this.orbR * dt;
+      const s1 = O.s + Math.sin(this.orbA) * this.orbR;
+      this.ls = s1; this.ll = O.x + Math.cos(this.orbA) * this.orbR - sh.pathX(s1);
       this.lh = O.y + 0.8 * Math.sin(this.orbA * 0.37) - sh.pathY(s1);
       this.vs = 0; this.vl = 0; direct = true;
       if (this.age > (O.T ?? 1e9)) { this.route = 'cross'; this.vl = (this.ll >= 0 ? 1 : -1) * this.speed; this.vs = this.speed * 0.3; }
@@ -840,7 +877,8 @@ export class Encounter {
       } else if (ev.ph === 1) {
         const k = Math.min(1, dt * 1.5);
         this.ls += (O.s - this.ls) * k; this.ll += (O.x - sh.pathX(this.ls) - this.ll) * k;
-        this.lh = Math.min(this.lh + 3.2 * dt, -sh.pathY(this.ls));
+        const top = Math.min(sh.ceilingAt(O.x, this.ls), 0) - this.baseSize * 0.35; // up to the surface (or the ice)
+        this.lh = Math.min(this.lh + 3.2 * dt, top - sh.pathY(this.ls));
         if (ev.t > 7) { ev.ph = 2; ev.t = 0; }
       } else {
         this.maxPitch = 0.35 + 1.0 * Math.max(0, 1 - ev.t / 3);
@@ -932,10 +970,13 @@ export class Encounter {
     const y = this._zoneY(x, s, fl, ce, wh + this.evH);
     const ny = this.Cy + (y - this.Cy) * (1 - Math.exp(-dt * 0.9));
     const nz = -s - this.anchorZ;
-    const k = 1 - Math.exp(-dt * 3);
-    this.Cvx += ((x - this.Cx) / dt - this.Cvx) * k;
-    this.Cvy += ((ny - this.Cy) / dt - this.Cvy) * k;
-    this.Cvz += ((nz - this.Cz) / dt - this.Cvz) * k;
+    const k = 1 - Math.exp(-dt * 3), jump = h3(x - this.Cx, ny - this.Cy, nz - this.Cz) > Math.max(3, this.maxSwim * dt * 3);
+    if (jump) { this.Cvx = 0; this.Cvy = 0; this.Cvz = 0; } // relocated (set piece / route change): not a velocity
+    else {
+      this.Cvx += ((x - this.Cx) / dt - this.Cvx) * k;
+      this.Cvy += ((ny - this.Cy) / dt - this.Cvy) * k;
+      this.Cvz += ((nz - this.Cz) / dt - this.Cvz) * k;
+    }
     this.Cx = x; this.Cy = ny; this.Cz = nz;
     const hs = h2(this.Cvx, this.Cvz);
     if (hs > 0.05) {
@@ -977,7 +1018,9 @@ export class Encounter {
     }
     // agent LOD: agents reacting to the camera (inside its avoidance range) or startled steer every frame; the
     // others every 2nd frame (every 3rd when smaller than ~12 px), coasting in between (staggered across agents)
-    const coastOK = n >= 4 && !this.event, fc = ++this.fc, PH = this.PH, BF = this.BF, ACC = this.ACC, nearR2 = (avR + 1.5) * (avR + 1.5);
+    const fastObs = this.fast && this.obs.length > 0;
+    const coastOK = n >= 4 && !this.event && !fastObs, fc = ++this.fc, PH = this.PH, BF = this.BF, ACC = this.ACC, nearR2 = (avR + 1.5) * (avR + 1.5);
+    const ceilClamp = this.fast && sh.hasCeiling(-(this.bounds.z + az)), hh0 = Math.max(-this.entry.minY, 0.04);
     this._cx = cx; this._cy = cy; this._cz = cz;
     // predators in or around a bait ball (double-buffered: written by the hunters each frame)
     if (this.threatsNext) { const t = this.threats; this.threats = this.threatsNext; this.threatsNext = t; this.nThreat = this.nThreatNext; this.nThreatNext = 0; }
@@ -1004,10 +1047,15 @@ export class Encounter {
           P[i3] += vx * dt; P[i3 + 1] += vy * dt; P[i3 + 2] += vz * dt;
           let ph = PH[i] + TAU * BF[i] * dt; if (ph > PH_WRAP) ph -= PH_WRAP; PH[i] = ph;
           ACC[i] += dt;
+          let ctop = Infinity;
+          if (ceilClamp) {
+            ctop = Math.min(sh.ceilingAt(P[i3], -(P[i3 + 2] + az)), 0) - SZ[i] * Math.max(hh0, F[i3 + 1] * 0.45 + hh0 * 0.75) - 0.06;
+            if (P[i3 + 1] > ctop) { P[i3 + 1] = ctop; if (V[i3 + 1] > 0) V[i3 + 1] = 0; }
+          }
           if (this.obs.length) {
             this.CLR[i] -= h3(vx, vy, vz) * dt + 0.01;
             if (this.CLR[i] < 0.05) {
-              if (!this._pushOut(i, P, V)) { P[i3] -= vx * dt; P[i3 + 1] -= vy * dt; P[i3 + 2] -= vz * dt; V[i3] = V[i3 + 1] = V[i3 + 2] = 0; }
+              if (!this._pushOut(i, P, V, ctop)) { P[i3] -= vx * dt; P[i3 + 1] -= vy * dt; P[i3 + 2] -= vz * dt; V[i3] = V[i3 + 1] = V[i3 + 2] = 0; this._unstick(i); }
               this.CLR[i] = Math.min(this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 1, this._obsList(P[i3], P[i3 + 2])), 1.8) - (this.elong ? this.SZ[i] * 0.45 : 0);
             }
           }
@@ -1048,17 +1096,17 @@ export class Encounter {
       const STL = this.STL;
       const OA = this.OA;
       if (this.obs.length) {
-        if ((i + this.obsFrame) % 3 === 0) { // look ahead along the velocity: around, and over low rocks (staggered)
+        if (fastObs || (i + this.obsFrame) % 3 === 0) { // look ahead along the velocity: around, and over low rocks (staggered)
           const OL = this._obsList(px, pz);
           OA[i3] = OA[i3 + 1] = OA[i3 + 2] = 0;
           if (OL.length) {
             const T = 0.8 + this.SZ[i] * 0.2;
             const dC = this._clear(i, px, py, pz, 1, OL);
-            this.CLR[i] = Math.min(dC, 1.8) - (this.elong ? this.SZ[i] * 0.45 : 0); // list holds everything within ~2 m of the cell
+            this.CLR[i] = Math.min(dC, 1.8) - (this.elong ? this.SZ[i] * 0.45 : 0); // _clear sees 1.8 m out
             const thr = 0.7 + this.SZ[i] * 0.6;
             // the look-ahead clearance can't be below dC - |v|T - half length (skip the test when that is already clear)
             const reach = h3(V[i3], V[i3 + 1], V[i3 + 2]) * T + (this.elong ? this.SZ[i] * 0.42 : 0);
-            const dA = Math.min(dC, 1.5) - reach >= thr ? 1e9
+            const dA = Math.min(dC, 1.8) - reach >= thr ? 1e9
               : Math.min(this._clear(i, px + V[i3] * T, py + V[i3 + 1] * T, pz + V[i3 + 2] * T, flock && n > 30 ? 1 : 3, OL), dC + 0.2);
             if (dA < thr) {
               const k4 = (thr - dA) / thr * (maxS + 1.2) * 1.6;
@@ -1086,6 +1134,11 @@ export class Encounter {
       }
       let nx = px + vx * dt, ny = py + vy * dt, nz = pz + vz * dt;
       if (hi > lo) { if (ny < lo - 0.4) { ny = lo - 0.4; if (vy < 0) vy = 0; } if (ny > hi + 0.3) { ny = hi + 0.3; if (vy > 0) vy = 0; } }
+      let ctop = Infinity;
+      if (ceilClamp) { // exact ceiling right here (ice keels, cave roofs): never swim up into it (head first when pitched up)
+        ctop = Math.min(sh.ceilingAt(nx, -(nz + az)), 0) - SZ[i] * Math.max(hh0, F[i3 + 1] * 0.45 + hh0 * 0.75) - 0.06;
+        if (ny > ctop) { ny = ctop; if (vy > 0) vy = 0; }
+      }
       // hard bubble
       qx = nx - cx; qz = nz - cz;
       tq = sgl > 1e-6 ? clamp((qx * sgx + qz * sgz) / sgl, 0, 1) * 0.3 : 0;
@@ -1097,6 +1150,7 @@ export class Encounter {
         const ux = ed > 1e-4 ? ex * f : 0, uy = ed > 1e-4 ? ey * f : 1, uz = ed > 1e-4 ? ez * f : 0;
         nx = cx + sgx * tq + ux * hr; ny = cy + uy * hr; nz = cz + sgz * tq + uz * hr;
         const vn = vx * ux + vy * uy + vz * uz; if (vn < 0) { vx -= vn * ux; vy -= vn * uy; vz -= vn * uz; }
+        if (ny > ctop) { ny = ctop; if (vy > 0) vy = 0; } // the camera bubble must not push it into the ice either
       }
       V[i3] = vx; V[i3 + 1] = vy; V[i3 + 2] = vz;
       P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
@@ -1112,7 +1166,7 @@ export class Encounter {
       if (this.obs.length) { // exact correction (after the heading update) only when the clearance budget could be used up
         this.CLR[i] -= h3(nx - px, ny - py, nz - pz) + 0.01; // actual displacement (incl. camera-bubble pushes)
         if (this.CLR[i] < 0.05) {
-          if (!this._pushOut(i, P, V)) { P[i3] = px; P[i3 + 1] = py; P[i3 + 2] = pz; V[i3] = V[i3 + 1] = V[i3 + 2] = 0; } // wedged: undo the step
+          if (!this._pushOut(i, P, V, ctop)) { P[i3] = px; P[i3 + 1] = Math.min(py, ctop); P[i3 + 2] = pz; V[i3] = V[i3 + 1] = V[i3 + 2] = 0; this._unstick(i); } // wedged: undo the step
           this.CLR[i] = Math.min(this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 1, this._obsList(P[i3], P[i3 + 2])), 1.8) - (this.elong ? this.SZ[i] * 0.45 : 0);
         }
       }
