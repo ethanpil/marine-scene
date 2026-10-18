@@ -14,7 +14,7 @@ export const TABLES = {
     ['sergeant', 3, 60], ['napoleon', 1, 200], ['barracuda', 1.5, 150], ['jack', 1.2, 160], ['reefShark', 2, 100], ['whitetip', 1.5, 120],
     ['blacktip', 1.2, 140], ['eagleRay', 1.2, 150], ['bluespotRay', 1.5, 90], ['moray', 2, 60], ['spotMoray', 1.5, 80], ['gardenEel', 2, 90],
     ['splendidEel', 1, 120], ['greenTurtle', 1.8, 120], ['octopus', 2.5, 80], ['cuttlefish', 2, 80], ['reefSquid', 2, 80],
-    ['manta', 0.7, 360], ['whaleShark', 0.45, 600], ['bottlenose', 0.4, 500], ['proc:reef', 7, 12],
+    ['manta', 0.7, 360], ['whaleShark', 0.45, 600], ['bottlenose', 0.4, 500], ['proc:reef', 8, 10], ['rainbowRunner', 0.8, 120],
     ['southernRay', 1.2, 120], ['flounder', 1.5, 90], ['lizardfish', 1.5, 80], ['goatfish', 2, 60], ['nurseShark', 0.8, 160],
   ] },
   sandflat: { cover: 3, target: 12, lat: 50, list: [
@@ -39,7 +39,7 @@ export const TABLES = {
     ['oceanicWhitetip', 1.2, 160], ['blueShark', 2, 120], ['greatWhite', 0.5, 420], ['hammerhead', 0.8, 300], ['mola', 1.2, 220],
     ['manta', 0.8, 300], ['whaleShark', 0.7, 420], ['humpback', 0.9, 360], ['blueWhale', 0.5, 600], ['spermWhale', 0.5, 600],
     ['orca', 0.6, 500], ['commonDolphin', 1.6, 200], ['bottlenose', 1, 240], ['pilotWhale', 0.6, 400], ['moonJelly', 2, 90],
-    ['pelagia', 1.5, 120], ['seaNettle', 1, 140], ['siphonophore', 0.6, 300], ['greenTurtle', 1, 160], ['oceanicSquid', 2, 120],
+    ['pelagia', 1.5, 120], ['seaNettle', 1, 140], ['siphonophore', 0.6, 300], ['greenTurtle', 1, 160], ['oceanicSquid', 2, 120], ['proc:pelagic', 1.5, 40], ['rainbowRunner', 1.5, 90],
   ] },
   cave: { cover: 2.5, target: 7, lat: 4, list: [
     ['tarpon', 4, 50], ['sweeper', 5, 40], ['silverside', 4, 45], ['jack', 1, 150], ['moray', 1.5, 90], ['proc:cave', 3, 25],
@@ -73,7 +73,7 @@ export const TABLES = {
     ['emperorPenguin', 2.5, 90], ['adeliePenguin', 3, 70], ['leopardSeal', 1.5, 150], ['weddellSeal', 1.5, 150], ['krill', 3, 60],
     ['icefish', 3, 60], ['toothfish', 1.5, 120], ['orca', 0.6, 400], ['humpback', 0.5, 450],
     ['beluga', 2, 140], ['narwhal', 1.3, 200], ['arcticCod', 4, 50], ['harbourSeal', 1.5, 150], ['greenlandShark', 0.5, 450],
-    ['lionsMane', 1.5, 140], ['moonJelly', 1.5, 100], ['combJelly', 1, 120],
+    ['lionsMane', 1.5, 140], ['moonJelly', 1.5, 100], ['combJelly', 1, 120], ['proc:polar', 1.5, 40],
   ] },
 };
 
@@ -208,7 +208,7 @@ export class Director {
     const triBudget = sys.maxTris - sys.trisTotal;
     const addCand = (key, w, cd, bw, small) => {
       let k = key;
-      if (key.startsWith('proc:')) k = `${key}:${(region % 100000) * 16 + Math.floor(rng() * 6)}`;
+      if (key.startsWith('proc:')) k = `${key}:${(region % 100000) * 16 + Math.floor(rng() * 12)}`;
       if (this.forced) k = this.forced;
       const sp = this.species(k); if (!sp) return;
       const ck = key.startsWith('proc:') ? key : sp.key;
@@ -236,10 +236,44 @@ export class Director {
     if (!plan) return null;
     const enc = sys.spawn(pick.sp, plan);
     if (!enc) return null;
+    this.mixWith(enc, pick.sp, plan, c, ws, region);
     this.cool.set(pick.ck, this.clock + pick.cd * (0.7 + 0.6 * rng()));
     this.seen.set(pick.ck, this.clock);
     if (pick.sp.hl) this.hlTimer = 70 + rng() * 90;
     return enc;
+  }
+
+  // Mixed-species groups: companions share the primary group's path (schools) or patch (shoals),
+  // e.g. jacks with rainbow runners, sardines with anchovies, reef shoals of 2-4 species.
+  mixWith(enc, sp, plan, c, ws, region) {
+    const sys = this.sys, rng = this.rng, kind = enc.kind;
+    if (!['school', 'shoal', 'bait', 'mill'].includes(kind) || plan.route === 'swirl' || sys.enc.length > sys.maxEnc - 4 || rng() > 0.35) return;
+    const PAIR = { jack: ['rainbowRunner'], rainbowRunner: ['jack'], sardine: ['anchovy'], anchovy: ['sardine'], silverside: ['anchovy'],
+      snapper: ['sweetlips', 'proc'], bluetang: ['yellowtang', 'proc'], yellowtang: ['bluetang'], chromis: ['anthias', 'proc'], anthias: ['chromis', 'proc'],
+      sergeant: ['proc', 'chromis'], blacksmith: ['senorita'], senorita: ['blacksmith', 'proc'], goatfish: ['proc'], butterfly: ['proc', 'bluetang'] };
+    let opts = PAIR[sp.key] || (sp.key.startsWith('proc:') ? ['proc', 'proc'] : null);
+    if (!opts) return;
+    const extra = 1 + Math.floor(rng() * Math.min(2, opts.length));
+    for (let k = 0; k < extra; k++) {
+      let key = opts[k % opts.length];
+      if (key === 'proc') {
+        const t = ws[0] ? ws[0].key : 'reef';
+        if (!(TABLES[t]?.list || []).some((e) => e[0] === 'proc:' + t)) continue;
+        key = `proc:${t}:${(region % 100000) * 16 + Math.floor(rng() * 12)}`;
+      }
+      const sp2 = this.species(key);
+      if (!sp2 || sp2.key === sp.key) continue;
+      const kind2 = sp2.beh.kind === 'shoal' && kind !== 'shoal' ? kind : sp2.beh.kind;
+      if (!['school', 'shoal', 'bait', 'mill'].includes(kind2)) continue;
+      const n2 = Math.max(1, Math.min(Math.round(plan.n * (0.2 + rng() * 0.6)), sys.maxInstances - sys.instances));
+      const tris = sys.cache.map.get(sp2.key)?.tris ?? 1500;
+      if (n2 * tris > sys.maxTris - sys.trisTotal) continue;
+      const p2 = { ...plan, n: n2, seed: (rng() * 4294967296) >>> 0, variant: (plan.variant ^ (k + 1) * 2654435761) >>> 0, kind: kind === 'shoal' ? undefined : kind, evade: enc.evade, fadeIn: true };
+      if (kind === 'shoal') { // same patch: the companions' homes start at the primary's (structure-seeking) spot
+        const s0 = -(enc.homeZ + enc.anchorZ); p2.s0 = s0; p2.l0 = enc.homeX - sys.shape.pathX(s0); p2.noSeek = true; p2.kind = 'shoal';
+      }
+      sys.spawn(sp2, p2);
+    }
   }
 
   plan(sp, c, near, ws, instBudget, triBudget, prime, lead = false) {
@@ -250,12 +284,18 @@ export class Director {
     // spawn distance: fog edge normally; closer (with a dithered fade-in) when coverage is short
     const D = prime ? rr([10, fogD * 0.75]) : near ? rr([fogD * 0.45, fogD * 0.7]) : fogD * rr([0.75, 0.95]);
     let n = Math.round(beh.n[0] + (beh.n[1] - beh.n[0]) * rng());
-    n = Math.max(1, Math.min(n, instBudget));
+    // group sizes from singletons / stragglers to occasional huge aggregations
+    if (beh.n[1] > 3 && beh.kind !== 'colony') {
+      const r = rng();
+      if (r < 0.1) n = Math.max(1, Math.round(n * (0.1 + rng() * 0.25)));
+      else if (r > 0.93 && sp.size[1] < 2) n = Math.round(n * (1.5 + rng() * 0.7));
+    }
+    n = Math.max(1, Math.min(n, instBudget, 400));
     const tris = sys.cache.map.get(sp.key)?.tris ?? 1500;
     while (n > 1 && n * tris > triBudget) n = Math.floor(n * 0.7);
     if (n * tris > triBudget && n === 1 && tris > triBudget) return null;
     const side = rng() < 0.5 ? -1 : 1;
-    const plan = { n, seed: (rng() * 4294967296) >>> 0, variant: (this.region(c.s + D) ^ hash2i(sp.key.length, 3, 9) * 1e9) >>> 0, fadeIn: near || prime, latMax: lat, s0: c.s + D, l0: 0 };
+    const plan = { n, formation: pickW(rng, { ellipsoid: 3, ball: 1, ribbon: 1.5, wall: 1, loose: 1.5, column: 0.5 }), mood: pickW(rng, { calm: 2, feeding: 1, alert: 1 }), wseed: (rng() * 4294967296) >>> 0, seed: (rng() * 4294967296) >>> 0, variant: (this.region(c.s + D) ^ hash2i(sp.key.length, 3, 9) * 1e9) >>> 0, fadeIn: near || prime, latMax: lat, s0: c.s + D, l0: 0 };
     const speed = beh.speed ? rr(beh.speed) : 0.5;
     const latLim = (x) => Math.max(-lat, Math.min(lat, x));
     // Readable lateral offset: when a group leaves the frame while being passed it should still project
@@ -343,18 +383,20 @@ export class Director {
     }
     // validate water column at the spawn point; shrink lateral offset if needed
     const reg = sys.env && sys.env.obstacles;
-    for (let k = 0; k < 6; k++) {
+    // floor dwellers find a free spot locally (beside / on top of rocks); only mid-water groups are checked here
+    const local = ['shoal', 'hover', 'rest', 'octo', 'colony', 'peek'].includes(plan.kind || beh.kind);
+    const OFF = [[0, 0], [1.5, 0], [-1.5, 0], [0, 4], [3, 0], [-3, 0], [0, -4], [4.5, 3]];
+    const l0 = plan.l0, s0 = plan.s0;
+    for (let k = 0; k < OFF.length; k++) {
+      plan.l0 = l0 + OFF[k][0]; plan.s0 = s0 + OFF[k][1];
       const x = sh.pathX(plan.s0) + plan.l0;
       const fl = sh.floorAt(x, plan.s0), ce = Math.min(sh.ceilingAt(x, plan.s0), -0.4);
-      let ok = ce - fl > 1.2 + sp.size[1] * (sp.plan === 'jelly' ? 1 : 0.4);
-      if (ok && reg && reg.count) { // never spawn inside a rock / pillar / hull
-        const y = beh.zone === 'floor' || ['shoal', 'hover', 'rest', 'octo', 'colony', 'peek'].includes(beh.kind) ? fl + 0.5 : sh.pathY(plan.s0) + (plan.h0 || 0);
-        const need = 0.6 + sp.size[1] * 0.4;
-        for (const o of reg.query(x, plan.s0, need + 3, this._q || (this._q = []))) if (Obstacles.dist(o, x, y, plan.s0, null) < need) { ok = false; break; }
-        if (!ok) { plan.l0 += (plan.l0 >= 0 ? 1 : -1) * (2 + k * 1.5); plan.s0 += 3; continue; }
-      }
+      if (!(ce - fl > 1.2 + sp.size[1] * (sp.plan === 'jelly' ? 1 : 0.4))) continue;
+      if (local || !reg || !reg.count) return plan;
+      const y = Math.max(fl + 1, sh.pathY(plan.s0) + (plan.h0 || 0)), need = 0.6 + sp.size[1] * 0.4;
+      let ok = true;
+      for (const o of reg.query(x, plan.s0, need + 3, this._q || (this._q = []))) if (Obstacles.dist(o, x, y, plan.s0, null) < need) { ok = false; break; }
       if (ok) return plan;
-      plan.l0 *= 0.45;
     }
     return null;
   }

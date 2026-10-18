@@ -105,6 +105,7 @@ export class Encounter {
     geo.setAttribute('aG', this.entry.g);
     const mk = (k) => { const a = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4); geo.setAttribute(k, a); return a; };
     const aCol = mk('aCol'), aCol2 = mk('aCol2'), aPat = mk('aPat'), aPat2 = mk('aPat2'), aMot = mk('aMot');
+    const aVar = mk('aVar'), aVar2 = mk('aVar2');
     this.aAnim = mk('aAnim'); this.aAnim.setUsage(THREE.DynamicDrawUsage);
     this.geo = geo;
     this.tris = this.entry.tris * n;
@@ -122,8 +123,11 @@ export class Encounter {
 
     // ---- per-instance appearance ----
     const vr = mulberry32(plan.variant), c = sp.col;
-    const base = { d: jitter(c.d, vr, 1), b: jitter(c.b, vr, 0.6), p: jitter(c.p, vr, 0.8), f: jitter(c.f, vr, 1), p2: jitter(c.p2 || 0, vr, 0.6), a: jitter(c.a || 0, vr, 0.5) };
-    const indiv = sp.det === 0 || n > 20 ? 0.35 : 0.6;
+    // regional colour morph: the same species looks a bit different from one segment to the next
+    const morph = vr() < 0.3 ? 2.6 : 1.6;
+    const base = { d: jitter(c.d, vr, morph), b: jitter(c.b, vr, 0.8), p: jitter(c.p, vr, morph * 0.7), f: jitter(c.f, vr, morph), p2: jitter(c.p2 || 0, vr, 0.8), a: jitter(c.a || 0, vr, 0.7) };
+    const ceph = sp.plan === 'octopus' || sp.plan === 'squid';
+    const indiv = ceph ? 1.6 : sp.det === 0 || n > 20 ? 0.5 : 0.9;
     const cs = sp.cs || [0, 0.1], pat = sp.pat || [0, 1, 0], pat2 = sp.pat2 || [0, 1, 0], mot = sp.mot;
     const packed2z = bytes(sp.finEdge ?? 0, sp.finRays ?? 0.4, sp.iris ?? 0.5);
     const packed2w = bytes((cs[0] + 1) / 2, cs[1], (sp.glowMode ?? 0) / 255);
@@ -138,7 +142,18 @@ export class Encounter {
       aPat.array[o] = pat[0]; aPat.array[o + 1] = pat[1] * (pat[0] === 8 || pat[0] === 12 || pat[0] === 22 || pat[0] === 23 || pat[0] === 24 || pat[0] === 28 ? 1 : scaleJ * pj); aPat.array[o + 2] = pat[2]; aPat.array[o + 3] = pat2[0];
       aPat2.array[o] = pat2[1] * (pat2[0] === 3 || pat2[0] === 1 || pat2[0] === 4 || pat2[0] === 6 ? pj : 1); aPat2.array[o + 1] = pat2[2];
       aPat2.array[o + 2] = sp.sheen ?? 0.3; aPat2.array[o + 3] = roughGlow;
-      aMot.array[o] = mot.mode; aMot.array[o + 1] = mot.amp * (1 + (rng() - 0.5) * 0.15); aMot.array[o + 2] = mot.waves; aMot.array[o + 3] = mot.c0;
+      aMot.array[o] = mot.mode; aMot.array[o + 1] = mot.amp * (1 + (rng() - 0.5) * 0.3); aMot.array[o + 2] = mot.waves * (1 + (rng() - 0.5) * 0.15); aMot.array[o + 3] = mot.c0;
+      // individual: seed, girth, fin (or tentacle) size, pattern intensity
+      aVar.array[o] = rng();
+      aVar.array[o + 1] = clamp(1 + gauss(rng) * 0.05, 0.88, 1.14);
+      aVar.array[o + 2] = sp.plan === 'jelly' ? 0.7 + rng() * 0.6 : clamp(1 + gauss(rng) * 0.08, 0.8, 1.22);
+      aVar.array[o + 3] = rng() < 0.12 ? 0.5 + rng() * 0.3 : 0.8 + rng() * 0.2;
+      // scars & fin nicks (large animals, sharks), wear / fading, barnacles, fluke ID pattern
+      const big = this.baseSize > 1.1;
+      aVar2.array[o] = (sp.scars ?? (big ? 0.5 : 0.1)) * (rng() < (big ? 0.65 : 0.15) ? rng() : 0);
+      aVar2.array[o + 1] = rng() < 0.08 ? 0.3 + rng() * 0.5 : 0;
+      aVar2.array[o + 2] = sp.barnacles ? sp.barnacles * (0.3 + rng() * 0.7) : 0;
+      aVar2.array[o + 3] = sp.flukeId ? sp.flukeId * (0.7 + rng() * 0.3) : 0;
     }
 
     // ---- agent state ----
@@ -152,14 +167,27 @@ export class Encounter {
     this.MODE = new Uint8Array(n);           // rest / octo state machine
     this.TMR = new Float32Array(n);
     this.JET = new Float32Array(n);          // octopus jet factor (arms streaming behind)
+    this.FQ = new Float32Array(n);           // individual tail-beat frequency factor
+    this.OA = new Float32Array(n * 3);       // cached obstacle-avoidance steering (refreshed every 3rd frame)
+    this.CLR = new Float32Array(n);          // conservative clearance budget (skip exact tests while positive)
     this.bankBase = beh.side ? Math.PI / 2 : 0; // flatfish lie and swim on their side
     this.glides = mot.mode !== 4 && sp.plan !== 'octopus' && this.kind !== 'bait' && this.kind !== 'mill';
     for (let i = 0; i < n; i++) {
-      this.SZ[i] = this.baseSize * (1 + (rng() - 0.5) * (n > 1 ? 0.18 : 0));
+      // realistic size spread with occasional juveniles and big adults
+      let f = n > 1 ? Math.exp(gauss(rng) * 0.09) : 1;
+      if (n > 1) { const r = rng(); if (r < 0.07) f = 0.55 + rng() * 0.2; else if (r > 0.97) f = 1.2 + rng() * 0.2; }
+      if (sp.plan === 'jelly') f *= 0.8 + rng() * 0.45;
+      this.SZ[i] = this.baseSize * f;
+      this.FQ[i] = 0.85 + rng() * 0.3;
       this.PH[i] = rng() * TAU;
       for (let k = 0; k < 4; k++) this.RP[i * 4 + k] = rng();
     }
     this.speed = beh.speed ? beh.speed[0] + (beh.speed[1] - beh.speed[0]) * rng() : 0.3;
+    // group mood: calm (slow, spread out), feeding (busy), alert (tight, quick, skittish)
+    this.mood = plan.mood || 'calm';
+    this.speed *= this.mood === 'calm' ? 0.8 : this.mood === 'alert' ? 1.25 : 1.05;
+    this.moodSpacing = this.mood === 'calm' ? 1.15 : this.mood === 'alert' ? 0.72 : 1;
+    this.alertR = this.mood === 'alert' ? 1.5 : 0;
     this.evade = ['side', 'side', 'dive', 'rise'][Math.floor(rng() * 4)]; this.evH = 0;
     this.maxPitch = mot.mode === 1 || mot.mode === 2 ? 0.35 : mot.mode === 3 ? 0.7 : 0.5;
     this.turnRate = clamp(3.2 / Math.sqrt(this.baseSize + 0.2), 0.5, 6);
@@ -172,7 +200,7 @@ export class Encounter {
     this.obs = []; this.obsFrame = Math.floor(rng() * 3); // staggered refresh across groups
     this.rbU = this.entry.bodyR || 0.2;
     this.elong = !['jelly', 'octopus', 'seahorse'].includes(sp.plan);
-    this.worstPen = 0;
+    this.worstPen = 0; this.regCount = -1;
     this.matrixDirty = true;
     this._init(plan);
   }
@@ -183,7 +211,7 @@ export class Encounter {
     let s0 = plan.s0, x0 = sh.pathX(s0) + plan.l0;
     this.zone = plan.zone || beh.zone || 'mid';
     if (this.zone === 'floor' && sh.pathY(s0) - sh.floorAt(x0, s0) > 30) this.zone = 'mid';
-    if ((this.kind === 'shoal' || this.kind === 'hover') && this.zone === 'floor') {
+    if ((this.kind === 'shoal' || this.kind === 'hover') && this.zone === 'floor' && !plan.noSeek) {
       // reef fish gather around structure: prefer the highest nearby floor point (coral heads, rocks)
       let best = sh.floorAt(x0, s0), bx = x0, bs = s0;
       for (let k = 0; k < 6; k++) {
@@ -197,7 +225,9 @@ export class Encounter {
     // leader (path-relative)
     this.ls = s0; this.ll = plan.l0; this.lh = plan.h0 ?? 0; this.alt = plan.alt ?? 1;
     this.vs = plan.vs ?? 0; this.vl = plan.vl ?? 0; this.route = plan.route || 'hold';
-    this.wA = plan.wobble ?? 0; this.wF = 0.03 + rng() * 0.05; this.wP = rng() * TAU;
+    const wr = plan.wseed ? mulberry32(plan.wseed) : rng; // mixed-species groups share the same leader motion
+    this.wA = plan.wobble ?? 0; this.wF = 0.03 + wr() * 0.05; this.wP = wr() * TAU;
+    if (plan.evade) this.evade = plan.evade;
     this.escortT = 15 + rng() * 25; this.side = plan.l0 >= 0 ? 1 : -1;
     this.leadA = plan.leadA ?? 15; this.leadT = plan.leadT ?? 20; this.vh = plan.vh || 0;
     this.maxSwim = Math.max((beh.speed?.[1] ?? 1) * 2.2, 4.2); // lead groups must be able to keep pace with the camera
@@ -210,7 +240,9 @@ export class Encounter {
     const kind = this.kind;
     const size = this.baseSize;
     if (FLOCK_KINDS.has(kind)) {
-      const spacing = size * (kind === 'pod' ? 2.6 : kind === 'solo' ? 1.5 : kind === 'bait' ? 2.0 : 1.9);
+      const spacing = size * (kind === 'pod' ? 2.6 : kind === 'solo' ? 1.5 : kind === 'bait' ? 2.0 : 1.9) * (kind === 'bait' ? 1 : this.moodSpacing);
+      const FORM = { ellipsoid: [0.85, 0.42, 1.4], ball: [0.8, 0.8, 0.8], ribbon: [0.35, 0.3, 2.6], wall: [2.0, 1.1, 0.3], loose: [1.6, 0.7, 2.1], column: [0.5, 2.2, 0.5] };
+      const fm = FORM[plan.formation] || FORM.ellipsoid;
       const R = spacing * Math.cbrt(n) * (kind === 'bait' ? 0.75 : 0.95);
       this.R = R;
       for (let i = 0; i < n; i++) {
@@ -229,7 +261,8 @@ export class Encounter {
           SL[o] = 0; SL[o + 1] = 0; SL[o + 2] = 0;
         } else {
           let x, y, z; do { x = rng() * 2 - 1; y = rng() * 2 - 1; z = rng() * 2 - 1; } while (x * x + y * y + z * z > 1);
-          SL[o] = x * R * 0.85; SL[o + 1] = y * R * 0.42; SL[o + 2] = z * R * 1.4;
+          const ps = 0.85 + rng() * 0.3; // personal spacing
+          SL[o] = x * R * fm[0] * ps; SL[o + 1] = y * R * fm[1] * ps; SL[o + 2] = z * R * fm[2] * ps;
         }
         const t = this._slotTarget(i, 0);
         P[i * 3] = t[0] + (rng() - 0.5) * size; P[i * 3 + 1] = t[1]; P[i * 3 + 2] = t[2] + (rng() - 0.5) * size;
@@ -331,14 +364,15 @@ export class Encounter {
   _obsRefresh() {
     const reg = this.sys.env && this.sys.env.obstacles;
     if (!reg || !reg.count) { this.obs.length = 0; return; }
-    if (this.obsFrame++ % 3 !== 0 && this.obsValid) return;
-    const b = this.bounds, look = 3 + this.speed * 2.5 + this.baseSize;
+    const every = this.speed < 1 && this.kind !== 'bait' ? 6 : 3; // slow groups refresh less often (margin covers it)
+    if (this.obsFrame++ % every !== 0 && this.obsValid) return;
+    const b = this.bounds, look = 3 + this.speed * (every === 6 ? 4 : 2.5) + this.baseSize;
     const R = b.r + look + 2, bs = -(this.anchorZ + b.z);
     reg.query(b.x, bs, R, this.obs);
     this.obsValid = true;
     // bucket the short list into a small grid over the group so each instance only tests nearby obstacles
     const obs = this.obs, G = this.obsGrid || (this.obsGrid = { cells: [], n: 0, x0: 0, s0: 0, cs: 4 });
-    if (obs.length <= 10) { G.n = 0; return; }
+    if (obs.length <= 10 || obs.length * this.n < 600) { G.n = 0; return; } // a grid only pays off for big groups
     const cs = 4, nn = Math.min(16, Math.ceil((2 * R) / cs));
     G.n = nn; G.cs = (2 * R) / nn; G.x0 = b.x - R; G.s0 = bs - R;
     for (let k = 0; k < nn * nn; k++) { if (G.cells[k]) G.cells[k].length = 0; else G.cells[k] = []; }
@@ -383,10 +417,12 @@ export class Encounter {
     if (!L.length) return;
     // cheap early-out: if the centre sphere clears by more than the half length, no part of the body can touch
     if (this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 1, L) > (this.elong ? this.SZ[i] * 0.45 : 0) + 0.02) return;
-    for (let it = 0; it < 3; it++) {
+    for (let it = 0; it < 6; it++) {
       const d = this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 3, L);
       if (d >= 0) return;
-      P[i3] -= _hit.nx * d; P[i3 + 1] -= _hit.ny * d; P[i3 + 2] -= _hit.nz * d;
+      const k = d - 0.005; // land a hair outside the surface (float error)
+      if (it >= 4) { P[i3 + 1] -= k * 1.5; if (V && V[i3 + 1] < 0) V[i3 + 1] = 0; continue; } // wedged between rocks: escape over them
+      P[i3] -= _hit.nx * k; P[i3 + 1] -= _hit.ny * k; P[i3 + 2] -= _hit.nz * k;
       if (V) { const vn = V[i3] * _hit.nx + V[i3 + 1] * _hit.ny + V[i3 + 2] * _hit.nz; if (vn < 0) { V[i3] -= vn * _hit.nx; V[i3 + 1] -= vn * _hit.ny; V[i3 + 2] -= vn * _hit.nz; } }
     }
   }
@@ -479,13 +515,21 @@ export class Encounter {
     if (this.plan.fadeIn && !this.dying) this.fade = Math.min(1, this.fade + dt * 0.5);
     if (this.dying) { this.fade -= dt * 0.6; if (this.fade <= 0) { this.done = true; return; } }
     const k = this.kind;
+    // obstacles registered after we settled (chunk layouts finish later): refresh and re-validate everything
+    const reg = this.sys.env && this.sys.env.obstacles;
+    const rc = reg ? reg.count : 0;
+    if (rc !== this.regCount) { this.regCount = rc; this.obsValid = false; this.CLR.fill(0); this.recheck = true; }
+    this.recheckT = (this.recheckT || 0) - dt;
+    if (this.recheckT < 0) { this.recheckT = 0.5; this.recheck = true; }
     if (k !== 'colony' && k !== 'peek') this._obsRefresh();
+    else if (this.recheck && rc) this._revalidateBases();
     if (FLOCK_KINDS.has(k)) { this._leader(dt, c); this._steer(dt, c, true); }
     else if (k === 'shoal' || k === 'hover') this._steer(dt, c, false);
     else if (k === 'drift') this._drift(dt, c);
     else if (k === 'rest') this._rest(dt, c);
     else if (k === 'octo') this._octo(dt, c);
     else this._static(dt, c);
+    this.recheck = false;
     this._visibility(c);
     // despawn rules
     const b = this.bounds;
@@ -556,13 +600,15 @@ export class Encounter {
     const s = this.ls, x = sh.pathX(s) + this.ll + wl;
     const fl = sh.floorAt(x, s), ce = Math.min(sh.ceilingAt(x, s), 0);
     this.lFloor = fl; this.lCeil = ce;
-    if (this.obs.length) {
+    if (this.obs.length) { // steer the group centre around the closest obstacle only
       const rl = this.rbU * this.baseSize + Math.min((this.R || 0) * 0.5, 2) + 0.6;
-      const yy = this.Cy;
+      let bd = 1e9, bx = 0, by = 0;
       for (let j = 0; j < this.obs.length; j++) {
-        const d = Obstacles.dist(this.obs[j], x, yy, s + this.vs * 1.5, _n) - rl;
-        if (d < 1.5) { const k3 = (1.5 - d) * Math.min(1, dt * 1.2); this.ll += _n.x * k3; this.evH += Math.max(_n.y, 0.35) * k3; }
+        const d = Obstacles.dist(this.obs[j], x, this.Cy, s + this.vs * 1.5, _n) - rl;
+        if (d < bd) { bd = d; bx = _n.x; by = _n.y; }
       }
+      if (bd < 1.5) { const k3 = Math.min(1.5 - bd, 1.5) * Math.min(1, dt * 1.2); this.ll += bx * k3; this.evH += Math.max(by, 0.35) * k3; }
+      else if (this.route !== 'cross' && this.route !== 'crossNear' && this.route !== 'escort') this.ll += ((this.plan.l0 ?? this.ll) + this.vl * this.age - this.ll) * Math.min(1, dt * 0.08); // drift back to the planned line
     }
     const y = this._zoneY(x, s, fl, ce, wh + this.evH);
     const ny = this.Cy + (y - this.Cy) * (1 - Math.exp(-dt * 0.9));
@@ -593,7 +639,7 @@ export class Encounter {
     const maxS = flock ? Math.max(spd0 * 2.2, Math.hypot(this.Cvx, this.Cvz) * 1.5 + 0.5) : spd0 * 4 + 0.6;
     const kp = flock ? (kind === 'solo' ? 0.6 : kind === 'pod' ? 0.7 : 1.1) : 0.5;
     const ka = flock ? (this.baseSize > 3 ? 0.8 : 2.5) : 2.2;
-    const avR = this.hardR + (flock ? 3 + this.baseSize : 2.5);
+    const avR = this.hardR + (flock ? 3 + this.baseSize : 2.5) + this.alertR;
     // per-agent floor/ceiling sampling (round-robin)
     const needFloor = !flock || !this.openWater;
     if (needFloor) {
@@ -637,15 +683,24 @@ export class Encounter {
       let ex = px - (cx + sgx * tq), ey = py - py2, ez = pz - (cz + sgz * tq);
       let ed = Math.hypot(ex, ey, ez);
       const STL = this.STL;
-      const OL = this.obs.length ? this._obsList(px, pz) : this.obs;
-      if (OL.length && (n < 40 || ((i + this.obsFrame) & 1) === 0)) { // look ahead along the velocity: around, and over low rocks
-        const T = 0.8 + this.SZ[i] * 0.2;
-        const dA = Math.min(this._clear(i, px + V[i3] * T, py + V[i3 + 1] * T, pz + V[i3 + 2] * T, flock && n > 30 ? 1 : 3, OL), this._clear(i, px, py, pz, 1, OL) + 0.2);
-        const thr = 0.7 + this.SZ[i] * 0.6;
-        if (dA < thr) {
-          const k4 = (thr - dA) / thr * (maxS + 1.2) * 1.6;
-          dvx += _hit.nx * k4; dvy += (_hit.ny > -0.3 ? _hit.ny + 0.35 : _hit.ny) * k4; dvz += _hit.nz * k4;
+      const OA = this.OA;
+      if (this.obs.length) {
+        if ((i + this.obsFrame) % 3 === 0) { // look ahead along the velocity: around, and over low rocks (staggered)
+          const OL = this._obsList(px, pz);
+          OA[i3] = OA[i3 + 1] = OA[i3 + 2] = 0;
+          if (OL.length) {
+            const T = 0.8 + this.SZ[i] * 0.2;
+            const dC = this._clear(i, px, py, pz, 1, OL);
+            this.CLR[i] = Math.min(dC, 1.8) - (this.elong ? this.SZ[i] * 0.45 : 0); // list holds everything within ~2 m of the cell
+            const dA = Math.min(this._clear(i, px + V[i3] * T, py + V[i3 + 1] * T, pz + V[i3 + 2] * T, flock && n > 30 ? 1 : 3, OL), dC + 0.2);
+            const thr = 0.7 + this.SZ[i] * 0.6;
+            if (dA < thr) {
+              const k4 = (thr - dA) / thr * (maxS + 1.2) * 1.6;
+              OA[i3] = _hit.nx * k4; OA[i3 + 1] = (_hit.ny > -0.3 ? _hit.ny + 0.35 : _hit.ny) * k4; OA[i3 + 2] = _hit.nz * k4;
+            }
+          } else this.CLR[i] = 1.8 - (this.elong ? this.SZ[i] * 0.45 : 0);
         }
+        dvx += OA[i3]; dvy += OA[i3 + 1]; dvz += OA[i3 + 2];
       }
       if (ed < avR && ed > 1e-4) {
         const push = (avR - ed) / avR * (2.5 + spd0 * 2) * (flock ? 1.6 : 2.4) * (1 + STL[i]);
@@ -679,10 +734,13 @@ export class Encounter {
       }
       V[i3] = vx; V[i3 + 1] = vy; V[i3 + 2] = vz;
       P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
-      if (this.obs.length) this._pushOut(i, P, V);
       if (kind === 'bait' || kind === 'mill') // a drifting ball: fish face their milling direction, not the drift
         this._orient(i, dt, vx - this.Cvx * 0.85, vy - this.Cvy * 0.85, vz - this.Cvz * 0.85);
       else this._orient(i, dt, vx, vy, vz);
+      if (this.obs.length) { // exact correction (after the heading update) only when the clearance budget could be used up
+        this.CLR[i] -= Math.hypot(nx - px, ny - py, nz - pz) + 0.01; // actual displacement (incl. camera-bubble pushes)
+        if (this.CLR[i] < 0.05) { this._pushOut(i, P, V); this.CLR[i] = Math.min(this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 1, this._obsList(P[i3], P[i3 + 2])), 1.8) - (this.elong ? this.SZ[i] * 0.45 : 0); }
+      }
     }
     this._writeAll(dt);
   }
@@ -716,7 +774,7 @@ export class Encounter {
     const bankT = this.bankBase + clamp(yaw * spd * 0.35, -0.6, 0.6) * (this.baseSize > 4 ? 0.5 : 1);
     this.BANK[i] += (bankT - this.BANK[i]) * Math.min(1, dt * 2);
     const m = this.sp.mot;
-    const freq = (m.beat || 0) * spd / sz + (m.idle || 0.5) * (0.85 + 0.3 * this.RP[i * 4 + 2]);
+    const freq = ((m.beat || 0) * spd / sz + (m.idle || 0.5) * (0.85 + 0.3 * this.RP[i * 4 + 2])) * this.FQ[i];
     let ph = this.PH[i] + TAU * freq * dt; if (ph > PH_WRAP) ph -= PH_WRAP; this.PH[i] = ph;
     let at = clamp(0.3 + 0.75 * spd / (this.speed + 0.15), 0.3, 1.6);
     // gliding phases between bursts of propulsion (rays, sharks, turtles, larger fish)
@@ -739,6 +797,15 @@ export class Encounter {
       const i3 = i * 3, o = i * 4;
       const px = P[i3], py = P[i3 + 1], pz = P[i3 + 2];
       const dc = Math.min(Math.hypot(px - cx, (py - cy) * 0.5, pz - cz), Math.hypot(px - lx, (py - cy) * 0.5, pz - lz)); // mostly horizontal: the camera passes overhead
+      if (MODE[i] === 0 && this.obs.length) { // rest groups are tiny: check every frame
+        const d = this._clear(i, px, py, pz);
+        if (d < 0.03) { // something solid appeared here: hop clear, then glide to free sand nearby
+          this._pushOut(i, P, V);
+          const [hx, hz] = this._freeSpot(P[i3], P[i3 + 2], this.rbU * this.SZ[i] + 0.3, true);
+          this.HOME[i * 2] = hx; this.HOME[i * 2 + 1] = hz; MODE[i] = 2; this.STL[i] = 0.4;
+          continue;
+        }
+      }
       if (MODE[i] === 0) {
         V[i3] = V[i3 + 1] = V[i3 + 2] = 0;
         if (dc < SL[o + 3]) { // lift off: glide away from the camera's line, diagonally forward
@@ -768,6 +835,7 @@ export class Encounter {
       const ex = nx - cx, ey = ny - cy, ez = nz - cz, ed = Math.hypot(ex, ey, ez), hr = this.hardR;
       if (ed < hr && ed > 1e-4) { nx = cx + ex / ed * hr; ny = cy + ey / ed * hr; nz = cz + ez / ed * hr; }
       V[i3] = vx; V[i3 + 1] = vy; V[i3 + 2] = vz; P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
+      this._orient(i, dt, vx, vy, vz); // heading first: the final correction must see the final pose
       if (this.obs.length) {
         const dA = this._clear(i, nx + vx, ny + vy, nz + vz);
         if (dA < 0.8) { V[i3] += _hit.nx * (0.8 - dA) * dt * 4; V[i3 + 1] += Math.max(_hit.ny, 0.4) * (0.8 - dA) * dt * 4; V[i3 + 2] += _hit.nz * (0.8 - dA) * dt * 4; }
@@ -780,8 +848,7 @@ export class Encounter {
         const [hx, hz] = this._freeSpot(nx + vx * 1.5, nz + vz * 1.5, this.rbU * this.SZ[i] + 0.1, true); // settle beside rocks
         this.HOME[i * 2] = hx; this.HOME[i * 2 + 1] = hz;
       }
-      if (MODE[i] === 2 && ny <= fl + this._restLift(i) + 0.05 && dc > SL[o + 3] * 0.8) { MODE[i] = 0; P[i3 + 1] = fl + this._restLift(i); }
-      this._orient(i, dt, vx, vy, vz);
+      if (MODE[i] === 2 && ny <= fl + this._restLift(i) + 0.05 && dc > SL[o + 3] * 0.8) { MODE[i] = 0; P[i3 + 1] = fl + this._restLift(i); if (this.obs.length) this._pushOut(i, P, V); }
     }
     this._writeAll(dt);
   }
@@ -834,7 +901,13 @@ export class Encounter {
         if (ed < hr && ed > 1e-4) { nx = cx + ex / ed * hr; ny = cy + ey / ed * hr; nz = cz + ez / ed * hr; }
         P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
       }
-      if (this.obs.length) this._pushOut(i, P, V);
+      if (this.obs.length) {
+        const ox = P[i3], oz = P[i3 + 2];
+        this._pushOut(i, P, V);
+        if (MODE[i] === 0 && Math.abs(P[i3] - ox) + Math.abs(P[i3 + 2] - oz) > 0.05) { // blocked: crawl off to free sand
+          const [hx, hz] = this._freeSpot(P[i3], P[i3 + 2], this.rbU * this.SZ[i] + 0.2, true); HOME[i * 2] = hx; HOME[i * 2 + 1] = hz;
+        }
+      }
       const hv = Math.hypot(V[i3], V[i3 + 2]);
       if (hv > 0.03) { const k = Math.min(1, dt * 2); F[i3] += (V[i3] / hv - F[i3]) * k; F[i3 + 2] += (V[i3 + 2] / hv - F[i3 + 2]) * k; const l = Math.hypot(F[i3], F[i3 + 2]) || 1; F[i3] /= l; F[i3 + 2] /= l; }
       let ph = this.PH[i] + TAU * (0.4 + hv * 2 + JET[i] * 1.2) * dt; if (ph > PH_WRAP) ph -= PH_WRAP; this.PH[i] = ph;
@@ -881,6 +954,24 @@ export class Encounter {
       this.AMP[i] = 1;
     }
     this._writeAll(dt);
+  }
+
+  // Garden eels / morays: keep burrow bases out of any obstacle (re-run when the registry changes).
+  _revalidateBases() {
+    const reg = this.sys.env.obstacles, sh = this.sys.shape, SL = this.SL;
+    let moved = false;
+    for (let i = 0; i < this.n; i++) {
+      const o = i * 4, x = SL[o], z = SL[o + 2], s = -(z + this.anchorZ), y = SL[o + 1];
+      reg.query(x, s, 3, _q);
+      let inside = false;
+      for (const ob of _q) if (Obstacles.dist(ob, x, y + 0.05, s, null) < (this.kind === 'peek' ? -0.05 : 0.04)) { inside = true; break; }
+      if (!inside) continue;
+      const [nx, nz] = this._freeSpot(x, z, 0.12, true);
+      SL[o] = nx; SL[o + 2] = nz; SL[o + 1] = sh.floorAt(nx, -(nz + this.anchorZ)) - 0.02;
+      if (this.EXP) this.EXP[i * 2] = 0.02; // pop back out of the new burrow gradually
+      moved = true;
+    }
+    if (moved) this.matrixDirty = true;
   }
 
   _static(dt, c) {
@@ -998,5 +1089,6 @@ export class Encounter {
   }
 }
 const _t = new Float64Array(6);
+function gauss(r) { return (r() + r() + r() + r() - 2) * 1.73; } // ~N(0, 1)
 const _sphere = new THREE.Sphere();
 function kindNeedsExpose(k) { return k === 'colony' || k === 'peek'; }

@@ -18,6 +18,8 @@ attribute vec4 aPat;
 attribute vec4 aPat2;
 attribute vec4 aMot;
 attribute vec4 aAnim;
+attribute vec4 aVar;   // individual: seed, girth, fin/tentacle scale, pattern intensity
+attribute vec4 aVar2;  // individual: scars & fin nicks, wear/fading, barnacles, fluke-pattern strength
 varying vec3 vLoc;
 varying vec4 vGv;
 flat varying vec4 vCol;
@@ -27,6 +29,8 @@ flat varying vec4 vPat2;
 flat varying vec4 vMot;
 flat varying float vFade;
 flat varying float vExc;
+flat varying vec4 vVar;
+flat varying vec4 vVar2;
 
 void crRotZ(inout vec3 p, inout vec3 n, float x0, float th) {
   float cs = cos(th), sn = sin(th);
@@ -176,6 +180,8 @@ flat varying vec4 vPat2;
 flat varying vec4 vMot;
 flat varying float vFade;
 flat varying float vExc;
+flat varying vec4 vVar;
+flat varying vec4 vVar2;
 
 vec3 crUnpack(float f) {
   float r = floor(f / 65536.0);
@@ -320,9 +326,19 @@ vec2 crPat(float ty, vec2 q, float t, float vN, float sc, float pr, float sd, fl
 const VERT_MAIN = /* glsl */`
 vec3 objectNormal = vec3(normal);
 vec3 crPos = position;
+{ // individual proportions: girth, fin size, tentacle length
+  float gi = aVar.y, fs = aVar.z, pt = aG.x, md = aMot.x;
+  if (md > 3.5 && md < 4.5) { if (pt > 5.5 && pt < 6.5) crPos.y *= fs; else crPos.xz *= gi; }
+  else if (md < 5.5 || md > 6.5 && md < 8.5) {
+    if (pt < 0.5 || pt > 9.5 || (pt > 3.5 && pt < 4.5)) crPos.xy *= gi;
+    else if (pt > 0.5 && pt < 1.5) crPos.xy *= vec2(gi, gi * fs);
+    else if (pt > 1.5 && pt < 2.5 || pt > 6.5 && pt < 7.5) crPos.xy *= gi * mix(1.0, fs, 0.6);
+    else if (pt > 2.5 && pt < 3.5) crPos.xy *= fs;
+  }
+}
 crDeform(crPos, objectNormal);
 objectNormal = normalize(objectNormal);
-vLoc = position; vGv = aG; vCol = aCol; vCol2 = aCol2; vPat = aPat; vPat2 = aPat2; vMot = aMot; vFade = aAnim.w; vExc = aAnim.y;
+vLoc = position; vGv = aG; vCol = aCol; vCol2 = aCol2; vPat = aPat; vPat2 = aPat2; vMot = aMot; vFade = aAnim.w; vExc = aAnim.y; vVar = aVar; vVar2 = aVar2;
 `;
 
 const FRAG_COLOR = /* glsl */`
@@ -342,7 +358,10 @@ float vN = vGv.y;
 vec2 q = vec2(-vLoc.z, vLoc.y);
 if (crMode == 2.0 || crMode == 4.0 || crMode == 6.0) q = vec2(vLoc.x, -vLoc.z);
 if (crMode == 9.0) q = vec2(vLoc.y, vLoc.z);
-float sd = fract(vPat.y * 7.31 + vPat2.x * 3.17) * 50.0;  // per-individual pattern seed (scales are jittered)
+if (crMode == 1.0 || crMode == 3.0) q = vec2(-vLoc.z, vLoc.y + abs(vLoc.x)); // wrap over the back (no lateral streaking from above)
+vec2 qw = vec2(-vLoc.z, vLoc.y + abs(vLoc.x));                                 // wrapped coords for marks on top surfaces
+float sd = fract(vPat.y * 7.31 + vPat2.x * 3.17) * 50.0 + vVar.x * 97.0;  // per-individual pattern seed / phase
+q.x += (vVar.x - 0.5) * 0.06;  // pattern offset along the body
 float csL = pk2.x * 2.0 - 1.0;
 float csS = 1.0 + pk2.y * 40.0;
 float dors = clamp((vN - csL) * csS * 0.5 + 0.5, 0.0, 1.0);
@@ -350,6 +369,7 @@ dors = dors * dors * (3.0 - 2.0 * dors);
 vec3 crCol = mix(cB, cD, dors);
 vec2 m1 = crPat(vPat.x, q, crT, vN, vPat.y, vPat.z, sd, crPart);
 vec2 m2 = crPat(vPat.w, q, crT, vN, vPat2.x, vPat2.y, sd + 3.1, crPart);
+m1 *= vVar.w; m2 *= mix(1.0, vVar.w, 0.6); // individual pattern intensity
 bool crFin = (crPart > 0.5 && crPart < 3.5) || (crPart > 6.5 && crPart < 7.5);
 float crRough = fract(vPat2.w);
 float crGlowAmt = floor(vPat2.w) * 0.1;
@@ -357,6 +377,10 @@ float crSheen = vPat2.z;
 vec3 crGlow = vec3(0.0);
 if (crFin) {
   float fu = vGv.z, fw = vGv.w;
+  if (vVar2.x > 0.25 && (crPart == 1.0 || crPart == 3.0) && fw > 0.55) {
+    float nk = crNoise(vec2(fu * 7.0 + vVar.x * 31.0, vVar.x * 9.0));
+    if (nk > 0.8 - 0.12 * vVar2.x && fw > 1.0 - (nk - 0.68) * 2.2) discard;
+  }
   vec3 fc = cF;
   fc = mix(fc, cP, m1.x * 0.55);
   fc = mix(fc, cP2, m2.x * 0.85);
@@ -397,7 +421,7 @@ if (crPart == 4.0) {            // eye: glossy black pupil, iris ring
 // faint scale / skin micro-variation
 crCol *= 0.93 + 0.14 * crNoise(q * 23.0 + sd);
 if (crMode == 0.0 && crPart == 0.0 && vPat2.z > 0.12) {
-  vec2 sq = q * vec2(68.0, 92.0);
+  vec2 sq = qw * vec2(68.0, 92.0);
   float scl = abs(sin(sq.x + sq.y * 0.5)) * abs(sin(sq.x - sq.y * 0.5));
   crCol *= 0.95 + 0.07 * scl;
   crSheen *= 0.75 + 0.5 * scl;
@@ -405,6 +429,25 @@ if (crMode == 0.0 && crPart == 0.0 && vPat2.z > 0.12) {
   crCol = mix(crCol, crCol * 1.3 + 0.015, lline * 0.35);
 }
 if (crMode == 6.0) crCol = mix(crCol, cB * 1.15, clamp(vExc - 1.0, 0.0, 1.0) * 0.55); // blanching when alarmed
+if (vVar2.x > 0.01 && (crPart == 0.0 || crPart == 10.0)) { // healed scratches and scars
+  // thin wiggly scratches along a noise contour, sparse and individual
+  float cn = crNoise(qw * vec2(5.0, 9.0) + vVar.x * 40.0);
+  float sc2 = (1.0 - smoothstep(0.0, 0.012, abs(cn - 0.5))) * smoothstep(0.62, 0.7, crNoise(qw * 1.7 + vVar.x * 23.0));
+  crCol = mix(crCol, crCol * 1.45 + 0.05, sc2 * vVar2.x * 0.55);
+}
+if (vVar2.z > 0.01 && (crPart == 10.0 || (crMode == 1.0 && crPart == 0.0 && vN > -0.3 && crT < 0.35))) { // barnacles
+  vec3 bc = crCell(qw * 42.0 + vVar.x * 13.0);
+  float bb = (1.0 - smoothstep(0.12, 0.24, bc.x)) * step(1.0 - vVar2.z, bc.z);
+  crCol = mix(crCol, vec3(0.62, 0.6, 0.53), bb * 0.85); crRough = mix(crRough, 0.9, bb);
+}
+if (vVar2.w > 0.01 && crPart == 3.0) { // fluke pattern unique to the individual (photo-ID)
+  float fp = crFbm(q * 3.2 + vVar.x * 61.0) + 0.25 * crNoise(q * 11.0 + vVar.x * 7.0);
+  crCol = mix(crCol, mix(cD * 0.5, vec3(0.82, 0.83, 0.82), smoothstep(0.55, 0.62, fp)), vVar2.w);
+}
+if (vVar2.y > 0.01) { // faded / worn individuals
+  float l = dot(crCol, vec3(0.3, 0.5, 0.2));
+  crCol = mix(crCol, vec3(l) * 1.05, vVar2.y * 0.5);
+}
 if (glowMode == 1.0) crGlow += cA * m1.x * (0.05 + 3.0 * uGlow) * max(crGlowAmt, 0.2);
 if (glowMode == 2.0) crGlow += cA * (0.03 + 1.6 * uGlow) * crGlowAmt * (crPart == 6.0 ? 0.6 : 1.0);
 if (glowMode == 3.0) crGlow += cA * (0.02 + 2.5 * uGlow) * crGlowAmt * max(m1.x, m2.x);
@@ -431,7 +474,7 @@ const FRAG_SHEEN = /* glsl */`
   vec3 env = waterColor(rd) * exp(-uLightSigma * dB * 0.6) * (0.35 + 0.65 * uAmbientScale) * sk;
   // the bright surface / Snell's window above: silvery flanks flash as they tilt toward it
   float up = clamp(rd.y, 0.0, 1.0);
-  env += uSunColor * uSunScatter * (0.6 * up * up * up + 1.2 * pow(max(dot(rd, uSunDir), 0.0), 24.0)) * exp(-uLightSigma * dB) * sk;
+  env += uSunColor * uSunScatter * (0.6 * up * up * up + 0.45 * pow(max(dot(rd, uSunDir), 0.0), 8.0)) * exp(-uLightSigma * dB) * sk;
   vec3 irid = 0.88 + 0.12 * cos(6.2831853 * (nv * 1.4 + vec3(0.0, 0.33, 0.67)));
   reflectedLight.indirectSpecular += env * irid * crSheen * (0.3 + 0.7 * fr) * 1.5;
 }

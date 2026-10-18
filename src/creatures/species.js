@@ -53,7 +53,7 @@ const SHARK = fish({
   },
   eye: { t: 0.085, v: 0.25, r: 0.0085 },
   col: { d: 0x6a7480, b: 0xeef0f0, p: 0x222222, f: 0x6a7480, a: 0x101010 },
-  pat: [24, 0.18, 0], cs: [-0.05, 0.25], sheen: 0.15, rough: 0.42, iris: 0.2,
+  pat: [24, 0.18, 0], cs: [-0.05, 0.25], sheen: 0.15, rough: 0.42, iris: 0.2, scars: 0.9,
   mot: { mode: 0, amp: 0.065, waves: 0.8, c0: 0.1, beat: 0.8, idle: 0.35 },
   beh: CRUISE, size: [1.6, 2.4],
 });
@@ -291,7 +291,7 @@ export const SPECIES = {
     eye: { t: 0.05, v: 0.2, r: 0.012, x: 0.2, axis: [1, 0.2, 0.3] },
     col: C(0x14181e, 0xf2f2f0, 0x2a2a2a, 0x14181e, 0xe8e8e4), pat: [3, 5, 0.22], pat2: [6, 2.0, 0.72], cs: [0.0, 1.0],
     mot: { amp: 0.26, waves: 0.32, beat: 0.35, idle: 0.22 },
-    beh: { ...GIANT, n: [1, 3], speed: [0.8, 1.3], dist: [8, 30], over: [2, 5] }, size: [2.2, 3.2], hl: true,
+    beh: { ...GIANT, n: [1, 3], speed: [0.8, 1.3], dist: [8, 30], over: [2, 5] }, size: [2.2, 3.2], hl: true, scars: 0.4,
   }),
   moray: merge(EEL, {
     body: { depth: 0.085, width: 0.62, tm: 0.13, nose: 0.6, bumps: [['t', 0.07, 0.04, 0.18]] },
@@ -329,7 +329,7 @@ export const SPECIES = {
     eye: { t: 0.05, v: 0.3, r: 0.01 },
     col: C(0x5e4a28, 0xe0d4a8, 0x9a7a44, 0x5a4a30, 0x2a2416, 0x3a2a10), pat: [20, 5.5, 0], pat2: [4, 45, 0.25], cs: [-0.2, 0.3], sheen: 0.15, rough: 0.4,
     mot: { mode: 3, amp: 0.7, beat: 0.5, idle: 0.22 },
-    beh: { ...SOLO, speed: [0.4, 0.8], dist: [6, 25], zone: 'floor', alt: [1, 4] }, size: [0.9, 1.2],
+    beh: { ...SOLO, speed: [0.4, 0.8], dist: [6, 25], zone: 'floor', alt: [1, 4] }, size: [0.9, 1.2], barnacles: 0.3, scars: 0.3,
   }),
   octopus: {
     plan: 'octopus', det: 1, octo: { armLen: 0.55 },
@@ -471,7 +471,7 @@ export const SPECIES = {
     eye: { t: 0.13, v: -0.1, r: 0.006 },
     col: C(0x22262c, 0x8a9096, 0xd8dcdc, 0xe0e4e4, 0xb0b4b0), pat: [16, 26, 0], pat2: [3, 28, 0.14], cs: [-0.4, 0.2],
     mot: { amp: 0.045, waves: 0.55, beat: 0.8, idle: 0.12 },
-    beh: { ...GIANT, n: [1, 2], speed: [1.2, 2], dist: [30, 80] }, size: [12, 15], hl: true,
+    beh: { ...GIANT, n: [1, 2], speed: [1.2, 2], dist: [30, 80] }, size: [12, 15], hl: true, flukeId: 0.95, barnacles: 0.35, scars: 0.6,
   }),
   blueWhale: merge(CETACEAN, {
     body: ST([0, 0.02, 0.06, 0.12, 0.2, 0.32, 0.45, 0.58, 0.7, 0.8, 0.87, 0.92, 0.94],
@@ -495,7 +495,7 @@ export const SPECIES = {
     eye: { t: 0.27, v: -0.15, r: 0.005 },
     col: C(0x3a3836, 0x4a4644, 0x2a2826, 0x3a3836), pat: [6, 14, 0.5], cs: [-0.6, 0.1], rough: 0.4,
     mot: { amp: 0.045, waves: 0.55, beat: 0.8, idle: 0.12 },
-    beh: { ...GIANT, n: [1, 3], speed: [1.2, 1.8], dist: [30, 70] }, size: [12, 16], hl: true,
+    beh: { ...GIANT, n: [1, 3], speed: [1.2, 1.8], dist: [30, 70] }, size: [12, 16], hl: true, flukeId: 0.4, scars: 0.9,
   }),
   orca: merge(CETACEAN, {
     body: ST([0, 0.02, 0.05, 0.1, 0.18, 0.28, 0.4, 0.52, 0.64, 0.74, 0.82, 0.88, 0.9],
@@ -515,7 +515,7 @@ export const SPECIES = {
       [-0.012, -0.01, -0.008, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
     fins: { dorsal: [{ t0: 0.4, t1: 0.54, h: 0.1, shape: 'falcate', sweep: 1.0, thick: 0.08 }], flip: { t: 0.2, span: 0.05, a: -0.6, h: 0.12, dip: 0.55, sweep: 1.0, shape: 'flipper', thick: 0.1, part: 7 } },
     col: C(0x5a6470, 0xe0e4e8, 0, 0x5a6470), cs: [-0.15, 0.25],
-    beh: { ...POD, n: [4, 10], speed: [2, 3.5], zone: 'surface', routes: { cross: 1, oncoming: 1, escort: 2 } }, size: [2.4, 3.2], hl: true,
+    beh: { ...POD, n: [4, 10], speed: [2, 3.5], zone: 'surface', routes: { cross: 1, oncoming: 1, escort: 2 } }, size: [2.4, 3.2], hl: true, scars: 0.5,
   }),
   commonDolphin: null, // filled below (variant of bottlenose)
   pilotWhale: null,
@@ -871,6 +871,13 @@ Object.assign(SPECIES, {
     mot: { amp: 0.07, waves: 0.9, c0: 0.15, beat: 0.6 },
     beh: { kind: 'rest', n: [1, 3], spread: 5, lift: [4.5, 6], speed: [0.3, 0.6] }, size: [2.0, 2.8],
   }),
+  rainbowRunner: fish({
+    det: 0,
+    body: { depth: 0.17, width: 0.6, tm: 0.38, nose: 0.95, tail: 1.5, ped: 0.06, tEnd: 0.82 },
+    fins: { dorsal: [{ t0: 0.3, t1: 0.38, h: 0.05, shape: 'tri' }, { t0: 0.45, t1: 0.7, h: 0.05, shape: 'long' }], anal: [{ t0: 0.55, t1: 0.7, h: 0.04, shape: 'long' }], caudal: { shape: 'lunate', size: 0.24 } },
+    col: C(0x2a5a8a, 0xe8eef0, 0x6ac0ff, 0xf0d040, 0xf0d040, 0x101010), pat: [2, 7, 0.18], pat2: [23, 0.84, 1], cs: [0.15, 0.3], sheen: 0.8,
+    beh: { ...SCHOOL, n: [10, 40], speed: [0.9, 1.4] }, size: [0.6, 0.9],
+  }),
   oceanicSquid: fish({
     plan: 'squid', det: 1,
     body: ST([0, 0.04, 0.12, 0.25, 0.4, 0.5, 0.54, 0.58, 0.62, 0.65],
@@ -894,7 +901,7 @@ Object.assign(SPECIES, {
     beh: { kind: 'school', n: [5, 14], speed: [0.4, 1.0], zone: 'mid', routes: { lead: 2, hold: 2, cross: 1 } }, size: [0.35, 0.6],
   }),
 });
-for (const k of ['flounder', 'guitarfish', 'lizardfish', 'goatfish', 'nurseShark', 'oceanicSquid', 'glowSquid']) { SPECIES[k].key = k; SPECIES[k].name = k; }
+for (const k of ['flounder', 'guitarfish', 'lizardfish', 'goatfish', 'nurseShark', 'oceanicSquid', 'glowSquid', 'rainbowRunner']) { SPECIES[k].key = k; SPECIES[k].name = k; }
 
 // ---------- derived variants ----------
 const S = SPECIES;
@@ -1029,7 +1036,7 @@ export const NAMES = {
   emperorPenguin: 'Emperor penguin', adeliePenguin: 'Adélie penguin', krill: 'Antarctic krill', icefish: 'Blackfin icefish',
   toothfish: 'Antarctic toothfish', arcticCod: 'Arctic cod', lionsMane: "Lion's mane jellyfish", flounder: 'Peacock flounder',
   guitarfish: 'Shovelnose guitarfish', lizardfish: 'Variegated lizardfish', goatfish: 'Yellowfin goatfish', nurseShark: 'Nurse shark',
-  oceanicSquid: 'Humboldt squid', glowSquid: 'Bioluminescent squid',
+  oceanicSquid: 'Humboldt squid', glowSquid: 'Bioluminescent squid', rainbowRunner: 'Rainbow runner',
 };
 const FAMILIES = {
   reef: ['Wrasse', 'Damselfish', 'Butterflyfish', 'Snapper', 'Cardinalfish', 'Surgeonfish', 'Hawkfish', 'Grunt', 'Rabbitfish', 'Fusilier'],
