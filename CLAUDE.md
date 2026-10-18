@@ -25,7 +25,7 @@ Static site, no build step. The three.js version is pinned in the `index.html` i
 ## Why things are the way they are
 - **Sky-visibility map** (128² texels at 2 m, CPU-computed, camera-local): lets every material and the god rays know whether a cave or ice ceiling is overhead. This costs much less than shadows.
 - **ROV lamps** (`uLamp`): the deep zones and caves are physically too dark to watch, so lamps mounted beside the camera light the scene, as in documentary footage.
-- **GPU tiers:** integrated and mobile GPUs (regex in `main.js`) get no MSAA, quarter-res shafts with 16 steps, and DPR ≤ 1. Measured on an Intel HD 4600 at 1024×576: about 7.5 ms per frame for the base scene.
+- **GPU tiers:** integrated and mobile GPUs (regex in `main.js`) get no MSAA, quarter-res shafts with 16 steps, and DPR ≤ 1. Measured on an Intel HD 4600 at 1024×576: about 7.5 ms per frame for the bare scene (no props or creatures). The full scene (2026-10-18) costs 10–15 ms depending on biome: pelagic ~10, reef ~15. Of that, the post pipeline is a fixed ~5 ms and visible triangles are ~0.25–0.6M.
 - **Shadows (high tier only):**
   - A 2048² PCF sun shadow covers ±48 m around a point 32 m ahead of the camera, snapped to shadow texels to prevent shimmer.
   - Terrain marks opaque prop meshes as casting and receiving shadows. The floor only receives.
@@ -40,6 +40,22 @@ Static site, no build step. The three.js version is pinned in the `index.html` i
 - **Conditions** (`conditions.js`): a day/night cycle and weather produce multipliers that main.js applies. `U.uNight` and `U.uRain` are shared with props and creatures.
 - **Camera director** (`camera.js`): critically damped springs for altitude, gaze, focus and speed. Subjects come from `creatures.subjects(out)` and POIs; cooldowns stop it staring at one thing.
 - **Frame cap:** 60 fps by default (`?fps=`). The adaptive-resolution thresholds are relative to the cap.
+
+## Agent-built subsystems (conventions to keep)
+- **Props** (`src/props/`):
+  - Layouts run as continuation stages, each ≤ ~5 ms, and merge into batches. LOD is per mesh slice (`userData.lod` plus `THREE.LOD`).
+  - Every placement seats on its support through `groundY` / `Ground` in core.js.
+  - The new-zone modules (`nb_*.js`, `mangrove.js`, `wall.js`, `softcoral.js`, `deepplain.js`) use `nbFloor` and `seat()` in `nb_common.js`.
+  - Registering obstacles, labels with facts, and POIs is mandatory for solid or notable items.
+- **Creatures** (`src/creatures/`):
+  - `subjects(out)` ids are `uid*1000+i` (animal) or `+999` (group).
+  - Night tables blend by `U.uNight`, and POI set pieces have per-type cooldowns.
+  - Encounters keep a single hidden class, which matters for V8 speed.
+- **Audits:** run them before shipping prop or creature changes, because they catch floating and penetration regressions.
+  - `window.__propsAudit` (in-browser ground-gap audit)
+  - `(await import('/src/creatures/devfly.js')).obstacleTest(60, false)` (creature-in-rock check)
+  - `(await import('/src/creatures/prof.js')).prof(30)` (creature CPU)
+  - `tools/` (Node harnesses)
 
 ## Debugging
 - `__ocean.advance(seconds)` steps the simulation without rAF (the preview pane throttles rAF). `__ocean.bench(w, h, n)` measures GPU ms per frame at a fixed size. Benchmarks are unreliable while other tabs render the app.

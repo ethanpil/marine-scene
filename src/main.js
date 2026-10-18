@@ -47,7 +47,7 @@ const world = new THREE.Group();   // everything at global coordinates lives her
 scene.add(world);
 
 U.uNoiseTex.value = makeNoiseTexture(256);
-const caustics = new Caustics(512);
+const caustics = new Caustics(tier === 'low' ? 256 : 512);
 
 const sun = new THREE.DirectionalLight(0xffffff, 2.5);
 const hemi = new THREE.HemisphereLight(0x88ccff, 0x0a2030, 1.0);
@@ -295,7 +295,7 @@ blendParams(s);
 placeCamera(0, 0, C);
 terrain.prime(s);
 const clock = new THREE.Clock();
-let time = 0, simTime = 0, lastFrame = 0;
+let time = 0, simTime = 0, lastFrame = 0, causticFrame = 0;
 setTimeout(() => { document.getElementById('loader').style.opacity = 0; }, 900);
 setTimeout(() => document.getElementById('loader').remove(), 3600);
 
@@ -335,7 +335,8 @@ function tick(dt, draw) {
   terrain.update(s, 4, Math.min(330, Math.max(90, 4.5 / Math.min(U.uSigma.value.y, U.uSigma.value.z))));
   terrain.sky.syncUniforms(Oz);
   updateEnvironment(C);
-  caustics.update(renderer, time);
+  // the caustic pattern moves slowly: weak GPUs refresh it at half rate
+  if (tier !== 'low' || (causticFrame++ & 1) === 0) caustics.update(renderer, time);
   background.update(camera);
   surface.update(camera, paused ? 0 : dt, camera.position.y > -16 && !shape.hasCeiling(s + 30) && C.night < 0.6, Oz);
   snow.update(camera, dt, renderer);
