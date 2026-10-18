@@ -30,11 +30,14 @@ function sargassum(seed) {
   return b.build();
 }
 
-export function initPelagic() { T.sargassum = vary([1, 2, 3, 4, 5, 6, 7, 8].map(sargassum), 2, 131, { disp: 0.1, bend: 0.1, twist: 0.6 }); }
+export function initPelagic() {
+  T.sargassum = vary([1, 2, 3, 4, 5, 6, 7, 8].map(sargassum), 2, 131, { disp: 0.1, bend: 0.1, twist: 0.6 });
+  for (const t of T.sargassum) t.fact = 'Floating sargassum rafts are nurseries: young sea turtles hide and feed in them for years.';
+}
 
 export function layoutPelagic(ctx) {
   if (presence(ctx, 'pelagic') <= 0) return null;
-  const rng = ctx.rng, sw = new Batch(MAT.sway, 15000 * budgetK(ctx, 'pelagic'));
+  const rng = ctx.rng, sw = new Batch(MAT.sway, 15000 * budgetK(ctx, 'pelagic'), 'mid');
   const rafts = rng() < 0.55 ? 1 + Math.floor(rng() * 3) : 0;
   for (let r = 0; r < rafts; r++) {
     const s0 = ctx.s0 + rng() * 64, x0 = ctx.pathX(s0) + (rng() - 0.5) * 60;
@@ -48,6 +51,5 @@ export function layoutPelagic(ctx) {
       sw.add(rng.pick(T.sargassum), x, y, -(s - ctx.s0), orient(0, 1, 0, 0, rng() * TAU, (rng() - 0.5) * 0.3, (rng() - 0.5) * 0.3), sc, sc * 0.7, sc, c, c, c * 0.9, sc);
     }
   }
-  sw.split = 1;
   return { batches: [sw] };
 }

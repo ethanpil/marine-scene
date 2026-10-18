@@ -1,8 +1,8 @@
 // Tide pools: rocks crusted with coralline algae, green / pink anemones, ochre & purple sea stars,
 // purple urchins, mussel & barnacle clusters, turban snails, sea lettuce, surfgrass and pink tufts.
-import { Batch, T, TAU, floorSampler, presence, sstep, budgetK, bendSpots, vary, Builder } from './core.js';
+import { Batch, T, TAU, TUBE, floorSampler, presence, sstep, budgetK, bendSpots, vary, Builder, rotY, tierK, poi, pointsClear, placedPoints } from './core.js';
 import { anemone, seastar, urchin, musselBed, barnacles, snail, seaLettuce, tuft, grassPatch, rock, rockSet } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail, clusterer } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail, clusterer, groundY } from './scatter.js';
 import { MAT } from './materials.js';
 import { noise2, mulberry32 } from '../noise.js';
 
@@ -62,30 +62,61 @@ function specs() {
   return S;
 }
 
-// a rock outcrop with life on its dome and around its foot
-function outcrop(ctx, fs, st, sw, rng, x, s, size) {
+// a rock outcrop (a support) with life seated on its real surface and around its foot
+function outcrop(ctx, fs, st, life, rng, x, s, size) {
   const sp = specs();
-  const y0 = fs.at(x, s);
   const csc = putFloor(ctx, fs, st, sp.big, x, s, rng, size);
-  const tpl = T.tpRock[0];
-  const domeR = csc ? tpl.r * csc * 0.8 : 0, domeH = csc ? tpl.maxY * csc * 0.8 : 0;
-  const n = Math.round(10 + 14 * size);
+  const domeR = csc ? T.tpRock[0].r * csc * 0.8 : 0;
+  const n = Math.round((10 + 14 * size) * tierK(ctx));
   for (let k = 0; k < n; k++) {
     const e = pickW(rng, sp.list), a = rng() * TAU, rr = (domeR + 0.8) * Math.sqrt(rng());
-    const ix = x + Math.cos(a) * rr, is = s + Math.sin(a) * rr;
-    let y = fs.at(ix, is), nx = fs.nx, ny = fs.ny, nz = fs.nz;
-    if (rr < domeR) {
-      const q = rr / domeR; y = Math.max(y, y0 + domeH * Math.sqrt(Math.max(0, 1 - q * q)) - 0.05);
-      const l = Math.hypot(Math.cos(a) * q, 1, Math.sin(a) * q); nx = Math.cos(a) * q / l; ny = 1 / l; nz = -Math.sin(a) * q / l;
+    putFloor(ctx, fs, e.sway ? life.sw : life.st, sp[e.k], x + Math.cos(a) * rr, s + Math.sin(a) * rr, rng, 1.1);
+  }
+}
+
+// small natural arches beside the path every 300-700 m (fish swim through; the camera passes by)
+const segSets = new Map();
+function tideSet(seg) {
+  let S = segSets.get(seg.id);
+  if (S && S.seed === seg.seed) return S;
+  const rng = mulberry32(seg.seed ^ 0x71de);
+  S = { seed: seg.seed, arches: [] };
+  for (let a = seg.start + 120 + rng() * 200; a < seg.end - 80; a += 300 + rng() * 400) S.arches.push({ s: a, k: (rng() * 1e9) | 0 });
+  segSets.set(seg.id, S);
+  if (segSets.size > 24) segSets.delete(segSets.keys().next().value);
+  return S;
+}
+function smallArch(ctx, fs, st, life, rng, s) {
+  const tpl = rng.pick(T.archSmall), side = rng() < 0.5 ? -1 : 1, fl = { at: (x, ss) => fs.floor(x, ss) };
+  const yaw = Math.atan2(-(ctx.pathX(s + 3) - ctx.pathX(s - 3)), 6) + (rng() - 0.5) * 0.6, R = rotY(yaw);
+  for (let d = TUBE + tpl.arch.A + 2.5; d < TUBE + tpl.arch.A + 9; d += 1) {
+    const x = ctx.pathX(s) + side * d;
+    const y = groundY(fl, x, s, tpl, R, 1, 1, 1) - (tpl.arch.depth - 0.5); // legs sunk, ~0.5 m of them showing
+    if (!pointsClear(ctx, placedPoints(tpl, x, y, s, R, 1, 1, 1, 400), 0.4)) continue;
+    if (!st.add(tpl, x, y, -(s - ctx.s0), R, 1, 1, 1, 0.9 + rng() * 0.15, 0.85 + rng() * 0.15, 0.85 + rng() * 0.15, 0.8 + rng() * 0.5)) return;
+    const it = st.last;
+    it.g = 1; it.lbl = 'Small rock arch';
+    fs.addSupport(it, s);
+    poi(ctx, 'arch', x, y + tpl.arch.clear * 0.5 + 0.3, s, tpl.arch.A, { kind: 'small rock arch' });
+    for (let k = 0; k < 10; k++) { // crusted with life
+      const e = pickW(rng, specs().list), t = (rng() - 0.5) * 2.2;
+      putFloor(ctx, fs, e.sway ? life.sw : life.st, specs()[e.k], x + Math.cos(yaw) * tpl.arch.A * t, s - Math.sin(yaw) * tpl.arch.A * t + (rng() - 0.5) * 1.2, rng, 1);
     }
-    putAt(ctx, e.sway ? sw : st, sp[e.k], ix, y, is, nx, ny, nz, rng, 1.1);
+    return;
   }
 }
 
 export function layoutTidepool(ctx) {
   if (presence(ctx, 'tidepool') <= 0) return null;
-  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
-  const st = new Batch(MAT.static, 72000 * budgetK(ctx, 'tidepool')), sw = new Batch(MAT.sway, 44000 * budgetK(ctx, 'tidepool'));
+  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), bk = budgetK(ctx, 'tidepool'), tk = tierK(ctx);
+  const st = new Batch(MAT.static, 30000 * bk);                                                              // outcrop rocks, arches
+  const life = { st: new Batch(MAT.static, 36000 * bk * tk, 'mid'), sw: new Batch(MAT.sway, 40000 * bk * tk, 'mid') };
+  const near = new Batch(MAT.static, 14000 * bk * tk, 'near');
+  const idx = Math.floor(ctx.s0 / 64);
+  for (const seg of ctx.segments) {
+    if (seg.key !== 'tidepool') continue;
+    for (const a of tideSet(seg).arches) if (Math.floor(a.s / 64) === idx) smallArch(ctx, fs, st, life, mulberry32(a.k), a.s);
+  }
   const spots = [];
   for (let k = 0; k < 22; k++) {
     const p = spot(ctx, rng, 0, 18, 1.0);
@@ -93,18 +124,22 @@ export function layoutTidepool(ctx) {
     spots.push(p);
   }
   spots.sort((a, b) => a.d - b.d);
-  for (const p of spots) outcrop(ctx, fs, st, sw, rng, p.x, p.s, 0.6 + rng() * 0.7);
-  const nextP98 = clusterer(ctx, rng, 0, 20, 1.1);
-  for (let k = 0; k < 160; k++) {
-    const p = nextP98();
-    if (!p) continue;
-    const w = ctx.weightOf(p.s, 'tidepool') * (0.65 + 0.35 * noise2(p.x / 5, p.s / 5, 811));
-    if (rng() > w) continue;
-    const e = pickW(rng, sp.list);
-    putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 1.1);
-  }
-  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'tidepool') * 0.8) outcrop(ctx, fs, st, sw, rng, bendX(ctx, b, 2.4, rng, 1.0), b.s, 1.1);
-  microDetail(ctx, fs, st, rng, 'tidepool', sp.micro, 90, 18);
-  st.split = 3; sw.split = 1; sw.from = 3;
-  return { batches: [st, sw] };
+  const more = [];
+  for (let q = 0; q < spots.length; q += 4) more.push(() => { for (const p of spots.slice(q, q + 4)) outcrop(ctx, fs, st, life, rng, p.x, p.s, 0.6 + rng() * 0.7); });
+  more.push(() => {
+    const nextP98 = clusterer(ctx, rng, 0, 20, 1.1);
+    for (let k = 0; k < 160 * tk; k++) {
+      const p = nextP98();
+      if (!p) continue;
+      const w = ctx.weightOf(p.s, 'tidepool') * (0.65 + 0.35 * noise2(p.x / 5, p.s / 5, 811));
+      if (rng() > w) continue;
+      const e = pickW(rng, sp.list);
+      putFloor(ctx, fs, e.sway ? life.sw : life.st, sp[e.k], p.x, p.s, rng, 1.1);
+    }
+  });
+  more.push(() => {
+    for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'tidepool') * 0.8) outcrop(ctx, fs, st, life, rng, bendX(ctx, b, 2.4, rng, 1.0), b.s, 1.1);
+    microDetail(ctx, fs, near, rng, 'tidepool', sp.micro, 90, 18);
+  });
+  return { batches: [st, life.st, life.sw, near], more };
 }

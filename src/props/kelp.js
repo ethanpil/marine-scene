@@ -1,8 +1,9 @@
 // Giant kelp forest: stipes rise from holdfasts to the surface, carrying blades on gas bladders,
 // and spread into a floating canopy. Sway (style 1) grows with height so bases stay anchored.
-import { Builder, Batch, T, TAU, vn3, sat, sstep, lerp, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, LENS } from './core.js';
+import { Builder, Batch, T, TAU, vn3, sat, sstep, lerp, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, LENS, rotY, tierK, poi } from './core.js';
 import { grassPatch } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer, groundY } from './scatter.js';
+import { placeArch, placeLedge } from './reef.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -106,6 +107,7 @@ function kelpPlant(seed, H, lod = 0) {
       }
     }
   }
+  b.band = 0.08; // only the holdfast disc counts as the contact band (stipes rise from it)
   const t = b.build();
   t.label = H > 8 ? 'Giant kelp' : 'Young giant kelp';
   return t;
@@ -141,6 +143,11 @@ function specs() {
     under: { tpl: T.understory, scale: [0.8, 1.6], follow: 0.6, sway: true, tint: tintFrom([[1, 1, 1]], 0.2) },
   });
   S.micro = [{ w: 3, spec: S.pebbles }, { w: 2.2, spec: S.algae }, { w: 1.4, spec: S.lump }];
+  S.palm = { tpl: T.seaPalm, scale: [0.8, 1.5], follow: 0.3, sway: true, tint: tintFrom([[1, 1, 1], [1.1, 0.95, 0.8]], 0.15) };
+  S.barrenUrchin = { tpl: T.urchin, scale: [0.07, 0.12], follow: 0.85, tint: tintFrom([[0.75, 0.3, 0.85], [0.6, 0.22, 0.7], [0.85, 0.25, 0.55]], 0.15) };
+  S.barrenRock = { ...S.rock, tint: tintFrom([[0.85, 0.5, 0.6], [0.75, 0.45, 0.55]], 0.12), grow: [1.2, 1.8] };
+  S.barrenList = [{ w: 9, k: 'barrenUrchin' }, { w: 1.5, k: 'barrenRock' }, { w: 0.6, k: 'star' }];
+  S.palmList = [{ w: 4, k: 'palm', sway: true }, { w: 2, k: 'rock' }, { w: 1.5, k: 'under', sway: true }, { w: 1, k: 'urchin' }, { w: 0.8, k: 'anem', sway: true }];
   S.floorList = [
     { w: 3, k: 'rock' }, { w: 2.5, k: 'under', sway: true }, { w: 1.5, k: 'urchin' }, { w: 1, k: 'star' },
     { w: 0.8, k: 'anem', sway: true }, { w: 0.6, k: 'sponge' }, { w: 0.5, k: 'boulder' },
@@ -148,23 +155,68 @@ function specs() {
   return S;
 }
 
+// ---------- per-segment communities ----------
+const COMMUNITIES = [
+  { name: 'dense canopy', plants: 1.35, floor: 1.0 },
+  { name: 'urchin barren', plants: 0.22, floor: 1.2, urchins: true },
+  { name: 'stalked-kelp grove', plants: 0.8, floor: 1.0, palms: 1 },
+  { name: 'mixed kelp', plants: 1.0, floor: 1.0 },
+];
+function community(ctx) {
+  const seg = ctx.segments.find((g) => g.key === 'kelp');
+  return seg ? COMMUNITIES[Math.floor(mulberry32(seg.seed ^ 0x4e1b)() * COMMUNITIES.length)] : COMMUNITIES[3];
+}
+// per-segment set pieces: a sunlit clearing, arches every 300-700 m
+const segSets = new Map();
+function kelpSet(ctx, seg) {
+  let S = segSets.get(seg.id);
+  if (S && S.seed === seg.seed) return S;
+  const rng = mulberry32(seg.seed ^ 0xc1ea2), len = seg.end - seg.start;
+  const cs = seg.start + 120 + rng() * Math.max(10, len - 240);
+  S = { seed: seg.seed, clear: { s: cs, x: ctx.pathX(cs) + (rng() - 0.5) * 10, r: 8 + rng() * 5 }, arches: [] };
+  for (let a = seg.start + 200 + rng() * 200; a < seg.end - 160; a += 300 + rng() * 400) S.arches.push({ s: a, k: (rng() * 1e9) | 0 });
+  segSets.set(seg.id, S);
+  if (segSets.size > 24) segSets.delete(segSets.keys().next().value);
+  return S;
+}
+
 export function layoutKelp(ctx) {
   if (presence(ctx, 'kelp') <= 0) return null;
-  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
+  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), comm = community(ctx), tk = tierK(ctx);
   const bk = budgetK(ctx, 'kelp');
-  const kb = new Batch(MAT.sway, 120000 * bk), st = new Batch(MAT.static, 10000 * bk);
+  const kb = new Batch(MAT.sway, 120000 * bk, 'mid'), st = new Batch(MAT.static, 26000 * bk);
+  const idx = Math.floor(ctx.s0 / 64), clears = [];
+  // set pieces first, so holdfasts can grip them
+  for (const seg of ctx.segments) {
+    if (seg.key !== 'kelp') continue;
+    const S = kelpSet(ctx, seg);
+    clears.push(S.clear);
+    for (const a of S.arches) if (Math.floor((a.s + 3) / 64) === idx) placeArch(ctx, fs, st, null, mulberry32(a.k), a.s, T.arch);
+    if (S.clear.s >= ctx.s0 && S.clear.s < ctx.s1) {
+      const c = S.clear, y = fs.at(c.x, c.s);
+      poi(ctx, 'kelp-clearing', c.x, y + 4, c.s, c.r, { community: comm.name });
+      if (ctx.addLabel) ctx.addLabel('Kelp clearing', c.x, y + 1.5, c.s, 'Gaps open where storms tear out old plants; sunlight floods in and young kelp races upward.');
+    }
+  }
+  for (const b of bendSpots(ctx)) {
+    if (rng() > ctx.weightOf(b.s, 'kelp') * 0.8) continue;
+    const x = putBend(ctx, fs, st, sp.bendRock, b, rng);
+    if (x !== null) for (let j = 0; j < 4; j++) putFloor(ctx, fs, st, sp.rock, x + (rng() - 0.5) * 6, b.s + (rng() - 0.5) * 6, rng, 0.7);
+  }
+  if (rng() < 0.4) placeLedge(ctx, fs, st, rng, T.ledge);
   const plants = [];
-  const nextP158 = clusterer(ctx, rng, 0, 45, 1.3);
-  for (let k = 0; k < 210; k++) {
-    const p = nextP158();
+  const nextP = clusterer(ctx, rng, 0, 45, 1.3);
+  for (let k = 0; k < 210 * comm.plants * tk; k++) {
+    const p = nextP();
     if (!p) continue;
     const grove = 0.5 + 0.5 * noise2(p.x / 26, p.s / 26, 301);
     if (rng() > ctx.weightOf(p.s, 'kelp') * (0.45 + 0.75 * grove)) continue;
+    if (clears.some((c) => (p.x - c.x) ** 2 + (p.s - c.s) ** 2 < c.r * c.r)) continue;
     plants.push(p);
   }
   plants.sort((a, b) => a.d - b.d);
-  for (const p of plants) {
-    const y = fs.at(p.x, p.s), H = ctx.surfaceY - 0.35 - y;
+  const grow = (list) => { for (const p of list) {
+    const y0 = fs.at(p.x, p.s), H = ctx.surfaceY - 0.35 - y0;
     if (H < 3.5) continue;
     const lod = p.d > 20, pool = lod ? T.kelpLo : T.kelp;
     const cands = pool.filter((t) => H / t.maxY > 0.8 && H / t.maxY < 1.25);
@@ -173,34 +225,34 @@ export function layoutKelp(ctx) {
     if (sy < 0.6 || sy > 1.6) continue;
     const sx = 0.9 + rng() * 0.3;
     // kelp is soft: the camera may fly through the forest, only the lens radius stays clear
-    if (!tubeClear(ctx, p.x, p.s, y, y + H + 0.5, tpl.rLow * sx + 0.2, 0.1, LENS)) continue;
-    const R = orient(0, 1, 0, 0, rng() * TAU);
-    const c = 0.85 + rng() * 0.3;
-    kb.add(tpl, p.x, y - 0.05, -(p.s - ctx.s0), R, sx, sy, sx, c, c * (0.95 + rng() * 0.1), c * (0.85 + rng() * 0.2), 1);
+    if (!tubeClear(ctx, p.x, p.s, y0, y0 + H + 0.5, tpl.rLow * sx + 0.2, 0.1, LENS)) continue;
+    const R = rotY(rng() * TAU), c = 0.85 + rng() * 0.3;
+    const y = groundY(fs, p.x, p.s, tpl, R, sx, sy, sx) - 0.06; // holdfast gripping floor or rock
+    if (!kb.add(tpl, p.x, y, -(p.s - ctx.s0), R, sx, sy, sx, c, c * (0.95 + rng() * 0.1), c * (0.85 + rng() * 0.2), 1)) break;
+    kb.last.g = 1;
     if (!lod && rng() < 0.4) putFloor(ctx, fs, st, sp.rock, p.x + (rng() - 0.5) * 2, p.s + (rng() - 0.5) * 2, rng, 0.6);
-  }
-  return { batches: [kb, st] };
+  } };
+  // plants in two stages: nearest half first
+  const h = Math.ceil(plants.length / 2);
+  return { batches: [st, kb], more: [() => grow(plants.slice(0, h)), () => grow(plants.slice(h))] };
 }
 
-// second chain: bend boulders, floor micro detail and understory life
+// second chain: floor micro detail and understory life (near), small rocks (mid)
 export function layoutKelpFloor(ctx) {
   if (presence(ctx, 'kelp') <= 0) return null;
-  const sp = specs(), rng = mulberry32((ctx.s0 * 2246822519) ^ 0x6b3), fs = floorSampler(ctx), bk = budgetK(ctx, 'kelp');
-  const st = new Batch(MAT.static, 30000 * bk), sw = new Batch(MAT.sway, 12000 * bk);
-  // boulders on the outside of bends, ringed by holdfasts
-  for (const b of bendSpots(ctx)) {
-    if (rng() > ctx.weightOf(b.s, 'kelp') * 0.8) continue;
-    const x = putBend(ctx, fs, st, sp.bendRock, b, rng);
-    if (x !== null) for (let j = 0; j < 4; j++) putFloor(ctx, fs, st, sp.rock, x + (rng() - 0.5) * 6, b.s + (rng() - 0.5) * 6, rng, 0.7);
-  }
+  const sp = specs(), rng = mulberry32((ctx.s0 * 2246822519) ^ 0x6b3), fs = floorSampler(ctx), bk = budgetK(ctx, 'kelp'), tk = tierK(ctx), comm = community(ctx);
+  const st = new Batch(MAT.static, 26000 * bk * tk, 'near'), sw = new Batch(MAT.sway, 14000 * bk * tk, 'near'), mid = new Batch(MAT.static, 12000 * bk * tk, 'mid');
   microDetail(ctx, fs, st, rng, 'kelp', sp.micro, 150, 28);
-  const nextP188 = clusterer(ctx, rng, 0, 36, 1.3);
-  for (let k = 0; k < 150; k++) {
-    const p = nextP188();
-    if (!p) continue;
-    if (rng() > ctx.weightOf(p.s, 'kelp')) continue;
-    const e = pickW(rng, sp.floorList);
-    putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 0.8 + sstep(4, 30, p.d) * 0.6);
-  }
-  return { batches: [st, sw] };
+  const list = comm.urchins ? sp.barrenList : comm.palms ? sp.palmList : sp.floorList;
+  const nextP = clusterer(ctx, rng, 0, 36, 1.3, comm.urchins ? { r: [1.5, 6], n: [6, 20], single: 0.05 } : undefined);
+  const life = () => {
+    for (let k = 0; k < 75 * tk * comm.floor; k++) {
+      const p = nextP();
+      if (!p) continue;
+      if (rng() > ctx.weightOf(p.s, 'kelp')) continue;
+      const e = pickW(rng, list);
+      putFloor(ctx, fs, e.k === 'rock' || e.k === 'boulder' ? mid : e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 0.8 + sstep(4, 30, p.d) * 0.6);
+    }
+  };
+  return { batches: [mid, st, sw], more: [life, life] };
 }

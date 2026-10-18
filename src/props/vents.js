@@ -1,9 +1,9 @@
 // Hydrothermal vents: black-smoker chimneys (glowing mineral bases, sulphide streaks) with billowing
 // smoke plumes, tube-worm thickets, mussel beds and bacterial mats. Vent fields are seeded per segment;
 // each chunk instantiates the field members whose centre lies inside it.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK, bendSpots, vary, rotZ } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK, bendSpots, vary, rotZ, tierK, poi } from './core.js';
 import { musselBed, rockInto, rockSet } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer, groundY } from './scatter.js';
 import { MAT, billboardMesh } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -16,9 +16,18 @@ function mineral(x, y, z, seed, o) {
   o[3] = c[0]; o[4] = c[1]; o[5] = c[2];
 }
 const lerp3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+// white smokers: pale carbonate / barite / anhydrite with ochre iron staining
+function mineralWhite(x, y, z, seed, o) {
+  const n1 = vn3(x * 1.7, y * 0.6, z * 1.7, seed), n2 = vn3(x * 4, y * 2, z * 4, seed + 7);
+  let c = [0.6, 0.58, 0.53];
+  if (n1 > 0.25) c = lerp3(c, [0.52, 0.4, 0.24], sstep(0.25, 0.65, n1));
+  if (n2 > 0.5) c = lerp3(c, [0.72, 0.71, 0.66], sstep(0.5, 0.8, n2));
+  if (n1 < -0.5) c = lerp3(c, [0.4, 0.4, 0.38], sstep(-0.5, -0.8, n1));
+  o[3] = c[0]; o[4] = c[1]; o[5] = c[2];
+}
 
-function chimney(seed, H) {
-  const b = new Builder(), rng = mulberry32(seed), vents = [];
+function chimney(seed, H, white = false) {
+  const b = new Builder(), rng = mulberry32(seed), vents = [], min = white ? mineralWhite : mineral, gk = white ? 0.06 : 1;
   const spire = (ox, oz, h, r0, lean) => {
     const fl = [rng(), rng(), rng(), rng() * 0.6];
     const v0 = b.vc;
@@ -27,9 +36,9 @@ function chimney(seed, H) {
       for (const f of fl) r += r0 * 0.7 * Math.exp(-(((v - f) / 0.03) ** 2));
       return [Math.max(0.05, r), v * h];
     }, (a, v) => 1 + 0.32 * vn3(Math.cos(a) * 2, v * h * 0.9, Math.sin(a) * 2, seed + 3), (v, a, x, y, z, o) => {
-      mineral(x, y, z, seed, o);
+      min(x, y, z, seed, o);
       const glow = sstep(0.14, 0.0, v) * 1.2 + sstep(0.95, 1.0, v) * 0.8 + (vn3(x * 3, y * 1.5, z * 3, seed + 11) > 0.55 ? 0.45 : 0);
-      o[6] = glow; o[7] = 3;
+      o[6] = glow * gk; o[7] = 3;
     });
     for (let i = v0; i < b.vc; i++) { const t = b.P[i * 3 + 1] / h; b.P[i * 3] += ox + lean[0] * t * h; b.P[i * 3 + 2] += oz + lean[1] * t * h; }
     vents.push([ox + lean[0] * h, h, oz + lean[1] * h, r0]);
@@ -45,13 +54,15 @@ function chimney(seed, H) {
   rockInto(b, seed + 99, { detail: 3, sx: 1.9, sy: 0.9, sz: 1.7, rough: 0.4, flat: 0.2, growth: 0, col: [0.1, 0.09, 0.08] });
   const tmp = [0, 0, 0, 0, 0, 0];
   b.paint(v0, (i, x, y, z, nx, ny, nz, o) => {
-    mineral(x, y, z, seed + 1, tmp);
+    min(x, y, z, seed + 1, tmp);
     const crack = vn3(x * 2.5, y * 2.5, z * 2.5, seed + 5);
     const g = sstep(0.35, 0.55, crack) * 1.4 + sstep(0.6, 0.0, y) * 0.35;
-    o[0] = tmp[3]; o[1] = tmp[4]; o[2] = tmp[5]; o[3] = g; o[4] = 3;
+    o[0] = tmp[3]; o[1] = tmp[4]; o[2] = tmp[5]; o[3] = g * gk; o[4] = 3;
   });
   const tpl = b.build();
   tpl.vents = vents;
+  if (white) { tpl.label = 'White smoker'; tpl.fact = 'White smokers vent cooler fluid, clouded with barium, calcium and silica instead of black sulphides.'; }
+  else tpl.fact = 'Black smokers gush water at over 350 °C, kept liquid by the crushing pressure of the deep.';
   return tpl;
 }
 
@@ -108,6 +119,7 @@ function bacterialMat(seed) {
 
 export function initVents() {
   T.chimney = [...[[1, 6], [2, 9], [3, 12], [4, 15], [5, 8], [6, 11], [7, 7], [8, 13]].map(([s, h]) => chimney(s, h)), ...[1, 2, 3].map(beehive), ...[1, 2].map(toppled)];
+  T.chimneyWhite = [[31, 7], [32, 10], [33, 13], [34, 16], [35, 9], [36, 12]].map(([s, h]) => chimney(s, h, true));
   T.worms = vary([1, 2, 3, 4, 5, 6].map((s) => tubeWorms(s, { n: 12 + s * 7, r: 0.25 + s * 0.06 })), 2, 91, { disp: 0.06, bend: 0.15, twist: 0.4 });
   T.ventMussels = [1, 2, 3, 4, 5].map((s) => musselBed(60 + s, { n: 25 + s * 12, r: 0.4 + s * 0.15, col: [0.3, 0.22, 0.1], edge: [0.55, 0.45, 0.22], len: 0.1 + s * 0.008 }));
   T.mat = vary([1, 2, 3].map(bacterialMat), 2, 93, { disp: 0.05, bend: 0, twist: 0.8 });
@@ -126,17 +138,29 @@ function specs() {
   S.pebbles = { tpl: T.pebbles, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[0.25, 0.22, 0.2], [0.4, 0.25, 0.15]], 0.1) };
   S.micro = [{ w: 3, spec: S.pebbles }, { w: 1.2, spec: S.mat }, { w: 1.4, spec: S.mussels }];
   S.around = [{ w: 3, k: 'worms', sway: true }, { w: 2, k: 'mussels' }, { w: 2, k: 'mat' }, { w: 1.2, k: 'rock' }];
+  S.aroundWhite = [{ w: 1.4, k: 'worms', sway: true }, { w: 2.2, k: 'mussels' }, { w: 3.6, k: 'mat' }, { w: 1.2, k: 'rock' }];
   return S;
 }
 
-// fields per segment: list of members {kind, x, s, scale, seed}
+// ---------- per-segment communities ----------
+const COMMUNITIES = [
+  { name: 'black smoker field', white: false, worms: 1.0, mats: 1.0 },
+  { name: 'white smoker field', white: true, worms: 0.6, mats: 1.8 },
+];
+function community(ctx) {
+  const seg = ctx.segments.find((g) => g.key === 'vents');
+  return seg ? COMMUNITIES[Math.floor(mulberry32(seg.seed ^ 0x7e11)() * COMMUNITIES.length)] : COMMUNITIES[0];
+}
+
+// fields per segment: centres + members {kind, x, s, seed}
 const fields = new Map();
 function segmentFields(ctx, seg) {
   let F = fields.get(seg.id);
   if (F && F.seed === seg.seed) return F;
-  const rng = mulberry32(seg.seed ^ 0x7e47), members = [];
+  const rng = mulberry32(seg.seed ^ 0x7e47), members = [], centres = [];
   for (let s = seg.start + 40 + rng() * 40; s < seg.end - 40; s += 45 + rng() * 70) {
     const side = rng() < 0.5 ? -1 : 1, d = 10 + rng() * 22, cx = ctx.pathX(s) + side * d;
+    centres.push({ x: cx, s });
     const n = 2 + Math.floor(rng() * 5);
     for (let k = 0; k < n; k++) {
       const a = rng() * TAU, r = k === 0 ? 0 : 3 + rng() * 9;
@@ -147,7 +171,7 @@ function segmentFields(ctx, seg) {
       members.push({ kind: 'life', x: cx + Math.cos(a) * r, s: s + Math.sin(a) * r, seed: (rng() * 1e9) | 0 });
     }
   }
-  F = { seed: seg.seed, members };
+  F = { seed: seg.seed, members, centres };
   fields.set(seg.id, F);
   if (fields.size > 24) fields.delete(fields.keys().next().value);
   return F;
@@ -155,57 +179,67 @@ function segmentFields(ctx, seg) {
 
 export function layoutVents(ctx) {
   if (presence(ctx, 'vents') <= 0) return null;
-  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
-  const st = new Batch(MAT.static, 75000 * budgetK(ctx, 'vents')), sw = new Batch(MAT.sway, 45000 * budgetK(ctx, 'vents'));
-  const plumes = [], halos = [];
-  const members = [];
+  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), comm = community(ctx), bk = budgetK(ctx, 'vents'), tk = tierK(ctx);
+  const st = new Batch(MAT.static, 50000 * bk);                                                    // chimneys, rocks
+  const mid = new Batch(MAT.static, 26000 * bk * tk, 'mid'), sw = new Batch(MAT.sway, 36000 * bk * tk, 'mid'); // vent life
+  const near = new Batch(MAT.static, 14000 * bk * tk, 'near');                                       // micro detail
+  const plumes = [], halos = [], members = [], pool = comm.white ? T.chimneyWhite : T.chimney;
+  const inChunk = (s) => s >= ctx.s0 && s < ctx.s1;
   for (const seg of ctx.segments) {
     if (seg.key !== 'vents') continue;
-    for (const m of segmentFields(ctx, seg).members) if (m.s >= ctx.s0 && m.s < ctx.s1) members.push(m);
+    const F = segmentFields(ctx, seg);
+    for (const m of F.members) if (inChunk(m.s)) members.push(m);
+    for (const c of F.centres) if (inChunk(c.s)) poi(ctx, 'vent-field', c.x, fs.at(c.x, c.s) + 3, c.s, 12, { kind: comm.name });
   }
   // chimneys on the outside of bends: the camera curves past the smoking stack
   for (const b of bendSpots(ctx)) {
     if (rng() > ctx.weightOf(b.s, 'vents') * 0.8) continue;
     members.push({ kind: 'chimney', x: bendX(ctx, b, 2.6, rng, 1.2), s: b.s, seed: (b.s * 7919) | 0 });
   }
-  {
-    for (const m of members) {
-      const r2 = mulberry32(m.seed);
-      if (m.kind === 'chimney') {
-        const tpl = r2.pick(T.chimney), sc = 0.75 + r2() * 0.5;
-        const y = fs.at(m.x, m.s);
-        if (!tubeClear(ctx, m.x, m.s, y, y + tpl.maxY * sc, tpl.r * sc + 0.5)) continue;
-        const yaw = r2() * TAU, R = rotY(yaw), z = -(m.s - ctx.s0);
-        st.add(tpl, m.x, y - 0.3, z, R, sc, sc, sc, 1, 1, 1, 1);
-        for (const v of tpl.vents) {
-          const vx = (R[0] * v[0] + R[2] * v[2]) * sc, vz = (R[6] * v[0] + R[8] * v[2]) * sc;
-          plumes.push({ x: m.x + vx, y: y - 0.3 + v[1] * sc, z: z + vz, n: v[3] > 0.45 ? 30 : 16, rise: 22 + r2() * 18, size: v[3] * sc * 1.6, speed: 1.4 + r2() * 0.8, phase: r2() });
-        }
-        halos.push({ x: m.x, y: y + 0.6, z, n: 1, rise: 0, size: 3.5 * sc, speed: 0, phase: r2() });
-        // worms & mussels hug the chimney foot
-        for (let k = 0; k < 6; k++) {
-          const a = r2() * TAU, rr = 1.6 * sc + r2() * 2.2;
-          const e = k < 3 ? sp.worms : sp.mussels;
-          putFloor(ctx, fs, k < 3 ? sw : st, e, m.x + Math.cos(a) * rr, m.s + Math.sin(a) * rr, r2);
-        }
-      } else {
-        const e = pickW(r2, sp.around);
-        putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], m.x, m.s, r2);
+  const one = (m) => {
+    const r2 = mulberry32(m.seed);
+    if (m.kind === 'chimney') {
+      const tpl = r2.pick(pool), sc = 0.75 + r2() * 0.5;
+      const y0 = fs.at(m.x, m.s);
+      if (!tubeClear(ctx, m.x, m.s, y0, y0 + tpl.maxY * sc, tpl.r * sc + 0.5)) return;
+      const yaw = r2() * TAU, R = rotY(yaw), z = -(m.s - ctx.s0);
+      const y = groundY(fs, m.x, m.s, tpl, R, sc, sc, sc) - 0.12 * sc; // sulphide mound settled into the floor
+      if (!st.add(tpl, m.x, y, z, R, sc, sc, sc, 1, 1, 1, 1)) return;
+      st.last.g = 1;
+      fs.addSupport(st.last, m.s);
+      for (const v of tpl.vents) {
+        const vx = (R[0] * v[0] + R[2] * v[2]) * sc, vz = (R[6] * v[0] + R[8] * v[2]) * sc;
+        plumes.push({ x: m.x + vx, y: y + v[1] * sc, z: z + vz, n: v[3] > 0.45 ? 30 : 16, rise: 22 + r2() * 18, size: v[3] * sc * 1.6, speed: (comm.white ? 0.9 : 1.4) + r2() * 0.8, phase: r2() });
       }
+      if (!comm.white) halos.push({ x: m.x, y: y0 + 0.6, z, n: 1, rise: 0, size: 3.5 * sc, speed: 0, phase: r2() });
+      // worms & mussels hug the chimney foot (on the mound where it is)
+      for (let k = 0; k < 6; k++) {
+        const a = r2() * TAU, rr = 1.6 * sc + r2() * 2.2, worm = k < 3 * comm.worms;
+        putFloor(ctx, fs, worm ? sw : mid, worm ? sp.worms : sp.mussels, m.x + Math.cos(a) * rr, m.s + Math.sin(a) * rr, r2);
+      }
+    } else {
+      const e = pickW(r2, comm.white ? sp.aroundWhite : sp.around);
+      putFloor(ctx, fs, e.sway ? sw : e.k === 'rock' ? st : mid, sp[e.k], m.x, m.s, r2);
     }
-  }
-  microDetail(ctx, fs, st, rng, 'vents', sp.micro, 110, 28);
+  };
+  const chim = members.filter((m) => m.kind === 'chimney'), life = members.filter((m) => m.kind !== 'chimney'), more = [];
+  for (let q = 0; q < chim.length; q += 3) more.push(() => chim.slice(q, q + 3).forEach(one));
+  for (let q = 0; q < life.length; q += 40) more.push(() => life.slice(q, q + 40).forEach(one));
+  more.push(() => microDetail(ctx, fs, near, rng, 'vents', sp.micro, 110, 28));
   // sparse rocks and the odd mat elsewhere
-  const nextP200 = clusterer(ctx, rng, 0, 40, 1);
-  for (let k = 0; k < 50; k++) {
-    const p = nextP200();
-    if (!p) continue;
-    if (rng() > ctx.weightOf(p.s, 'vents')) continue;
-    putFloor(ctx, fs, st, rng() < 0.7 ? sp.rock : sp.mat, p.x, p.s, rng);
-  }
-  st.split = 2; sw.split = 1;
-  const extra = [];
-  const pm = billboardMesh(plumes, MAT.plume, rng); if (pm) extra.push(pm);
-  const hm = billboardMesh(halos, MAT.halo, rng); if (hm) extra.push(hm);
-  return { batches: [st, sw], extra };
+  more.push(() => {
+    const nextP200 = clusterer(ctx, rng, 0, 40, 1);
+    for (let k = 0; k < 50 * tk; k++) {
+      const p = nextP200();
+      if (!p) continue;
+      if (rng() > ctx.weightOf(p.s, 'vents')) continue;
+      if (rng() < 0.7 / comm.mats) putFloor(ctx, fs, mid, sp.rock, p.x, p.s, rng);
+      else putFloor(ctx, fs, near, sp.mat, p.x, p.s, rng);
+    }
+    // plumes and glow halos once every chimney is seated
+    const pm = billboardMesh(plumes, comm.white ? MAT.plumeWhite : MAT.plume, rng); if (pm) L.extra.push(pm);
+    const hm = billboardMesh(halos, MAT.halo, rng); if (hm) L.extra.push(hm);
+  });
+  const L = { batches: [st, mid, sw, near], extra: [], more };
+  return L;
 }

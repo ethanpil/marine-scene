@@ -8,7 +8,7 @@ import { noise1, smoothstep, clamp } from './noise.js';
 // How much the camera wants to look at each kind of set piece (0..1).
 const POI_INTEREST = {
   'whale-fall': 0.95, 'brine-pool': 0.9, 'cleaning-station': 0.8, arch: 0.8, wreck: 0.75, treasure: 0.75,
-  'vent-field': 0.7, 'cave-opening': 0.7, giant: 0.65, iceberg: 0.6, statue: 0.55, ledge: 0.5,
+  'vent-field': 0.7, 'cave-opening': 0.7, giant: 0.65, iceberg: 0.6, statue: 0.42, ledge: 0.5,
   'wall-overhang': 0.5, 'amphora-den': 0.5, 'kelp-clearing': 0.5, 'garden-eel-field': 0.45, 'mangrove-roots': 0.4,
 };
 

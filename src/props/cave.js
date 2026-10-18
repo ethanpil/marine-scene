@@ -1,9 +1,9 @@
 // Cenote caves: speleothems hanging from / rising to the rock, columns where floor and ceiling meet,
 // breakdown boulders, drowned trees beneath the sky openings, and soft animated light shafts.
 import * as THREE from 'three';
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, pointsClear, placedPoints, orient, rotY, rotZ, mul3, budgetK, bendSpots, TUBE, vary } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, pointsClear, placedPoints, orient, rotY, rotZ, mul3, budgetK, bendSpots, TUBE, vary, tierK, poi } from './core.js';
 import { branchesInto, stoneInto } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail, clusterer } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail, clusterer, groundY, hangAt } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -74,17 +74,19 @@ export function initCave() {
   T.caveColumn = vary([1, 2, 3].map(column), 2, 37, { disp: 0.1, bend: 0.06, twist: 0.6 });
   T.deadTree = vary([1, 2, 3, 4, 5, 6].map(deadTree), 2, 47, { disp: 0.05, bend: 0.15, twist: 0.4 });
   const b = new Builder(); stoneInto(b, { sx: 1.6, sy: 0.9, sz: 1.2, p: 4, rough: 0.12, seed: 5, detail: 2, col: LIME, growth: 0.2, mode: 2 });
-  b.xform(0, [1, 0, 0, 0, 1, 0, 0, 0, 1], 0, 0.4, 0); T.block = [b.build()];
+  b.xform(0, [1, 0, 0, 0, 1, 0, 0, 0, 1], 0, 0.4, 0); T.caveBlock = [b.build()];
+  T.caveBlock[0].label = 'Breakdown block';
 }
 
 const S = {};
 function specs() {
   if (S.rock) return S;
   Object.assign(S, {
-    rock: { tpl: [...T.rocks, ...T.block], scale: [0.5, 2.2], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.6, tint: tintFrom([[0.62, 0.58, 0.5], [0.5, 0.48, 0.44]]) },
+    rock: { tpl: [...T.rocks, ...T.caveBlock], scale: [0.5, 2.2], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.6, tint: tintFrom([[0.62, 0.58, 0.5], [0.5, 0.48, 0.44]]) },
     pebbles: { tpl: T.pebbles, scale: [0.8, 1.7], follow: 1, sink: 0.02, tint: tintFrom([[0.85, 0.8, 0.7], [0.75, 0.72, 0.66]], 0.08) },
     grit: { tpl: T.rubble, scale: [0.8, 1.5], follow: 1, sink: 0.02, tint: tintFrom([[0.8, 0.77, 0.7]], 0.08) },
     flow: { tpl: T.flowstone, scale: [0.7, 1.6], follow: 0.7, sink: 0.1, tint: tintFrom([[1, 1, 1], [1.05, 0.95, 0.85]], 0.12) },
+    flowCream: { tpl: T.flowstone, scale: [0.9, 2.0], follow: 0.7, sink: 0.1, tint: tintFrom([[1.25, 1.18, 1.0], [1.2, 1.05, 0.85], [1.15, 0.95, 0.8]], 0.1) },
     mite: { tpl: T.stalagmite, scale: [0.6, 2.6], ys: [0.6, 1.4], follow: 0.15, tint: tintFrom([[1, 1, 1]]) },
   });
   S.micro = [{ w: 2, spec: S.pebbles }, { w: 1.4, spec: S.grit }];
@@ -177,76 +179,119 @@ function shaftMesh(ctx, fs, rng, clusters, sunDir) {
   return m;
 }
 
+// ---------- per-segment communities ----------
+const COMMUNITIES = [
+  { name: 'stalactite forest', tites: 1.8, mites: 1.6, cols: 1.6, flow: 0.7, trees: 0.6 },
+  { name: 'flowstone gallery', tites: 0.7, mites: 0.8, cols: 1.0, flow: 2.6, trees: 0.6, cream: 1 },
+  { name: 'tree-filled cenote', tites: 0.8, mites: 0.8, cols: 0.8, flow: 0.8, trees: 3.2, logs: 1 },
+  { name: 'mixed cavern', tites: 1.0, mites: 1.0, cols: 1.0, flow: 1.0, trees: 1.0 },
+];
+function community(ctx) {
+  const seg = ctx.segments.find((g) => g.key === 'cave');
+  return seg ? COMMUNITIES[Math.floor(mulberry32(seg.seed ^ 0xca7e)() * COMMUNITIES.length)] : COMMUNITIES[3];
+}
+
+// floor-to-ceiling column: foot seated on the floor, head pushed into the ceiling
+function placeColumn(ctx, fs, st, rng, x, s, sx) {
+  const tpl = rng.pick(T.caveColumn), R = rotY(rng() * TAU), H = tpl.head;
+  const y = groundY(fs, x, s, tpl, R, sx, 1, sx) - 0.06;
+  let top = -1e9;
+  for (let i = 0; i < H.length; i += 3) top = Math.max(top, ctx.ceilingAt(x + R[0] * H[i] * sx + R[2] * H[i + 2] * sx, s - (R[6] * H[i] * sx + R[8] * H[i + 2] * sx)));
+  const sy = (top - y) / (tpl.maxY - tpl.band) + 0.08;
+  if (!st.add(tpl, x, y, -(s - ctx.s0), R, sx, sy, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1)) return null;
+  const it = st.last;
+  it.g = 1; it.hang = 1;
+  return it;
+}
+
 export function makeCaveLayout(env) {
   return function layoutCave(ctx) {
     if (presence(ctx, 'cave') <= 0) return null;
-    const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
-    const st = new Batch(MAT.static, 80000 * budgetK(ctx, 'cave'));
+    const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), comm = community(ctx), tk = tierK(ctx), bk = budgetK(ctx, 'cave');
+    const st = new Batch(MAT.static, 34000 * bk);                          // columns, trees, big breakdown
+    const mid = new Batch(MAT.static, 60000 * bk * tk, 'mid');             // stalactites, stalagmites, flowstone
+    const near = new Batch(MAT.static, 16000 * bk * tk, 'near');           // floor micro detail
     const extra = [];
     const clusters = findOpenings(ctx);
     const sm = shaftMesh(ctx, fs, rng, clusters, env.U.uSunDir.value);
     if (sm) extra.push(sm);
-    // drowned trees and branches beneath the openings
+    // drowned trees and branches beneath the openings (a tree-filled cenote also has them further in)
+    const lying = (x, s, sc) => {
+      const tpl = rng.pick(T.deadTree), R = mul3(rotY(rng() * TAU), rotZ(1.25 + rng() * 0.3));
+      const y = groundY(fs, x, s, tpl, R, sc, sc, sc) - 0.12 * sc;
+      if (!pointsClear(ctx, placedPoints(tpl, x, y, s, R, sc, sc, sc, 300), 0.3)) return;
+      if (st.add(tpl, x, y, -(s - ctx.s0), R, sc, sc, sc, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 1)) st.last.g = 1;
+    };
+    const more = [];
     for (const c of clusters) {
-      const n = Math.min(3, 1 + Math.floor(c.r / 4));
+      const yc = fs.at(c.x, c.s);
+      if (c.r >= 2.5) poi(ctx, 'cave-opening', c.x, lerp(yc, ctx.surfaceY, 0.45), c.s, c.r, { r: c.r }); // real skylights only
+    }
+    more.push(() => { for (const c of clusters) {
+      const n = Math.min(3, 1 + Math.floor(c.r / 4)) * comm.trees;
       for (let k = 0; k < n; k++) {
         if (rng() > ctx.weightOf(c.s, 'cave')) continue;
         const [x0, s0] = c.cells[(rng() * c.cells.length) | 0];
         const x = x0 + (rng() - 0.5) * 4, s = s0 + (rng() - 0.5) * 4;
         if (s < ctx.s0 || s >= ctx.s1) continue;
-        const y = fs.at(x, s), tpl = rng.pick(T.deadTree), sc = 0.6 + rng() * 0.6;
-        const R = mul3(rotY(rng() * TAU), rotZ(1.25 + rng() * 0.3));
-        if (!pointsClear(ctx, placedPoints(tpl, x, y + 0.15, s, R, sc, sc, sc, 150), 0.3)) continue;
-        st.add(tpl, x, y + 0.15 * sc, -(s - ctx.s0), R, sc, sc, sc, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 1);
+        lying(x, s, 0.6 + rng() * 0.6);
       }
-    }
-    // stalactites from real ceiling (not in openings)
-    const nextP205 = clusterer(ctx, rng, 3.5, 24, 0.9);
-    for (let k = 0; k < 280; k++) {
-      const p = nextP205();
-      if (!p) continue;
-      if (rng() > ctx.weightOf(p.s, 'cave')) continue;
-      const c = ctx.ceilingAt(p.x, p.s);
-      if (c > ctx.surfaceY - 0.4) continue;
-      const f = fs.at(p.x, p.s), gap = c - f;
-      if (gap < 1.2) continue;
-      const L = Math.min(gap * 0.5, 0.4 + Math.pow(rng(), 1.4) * 4.5), sx = 0.7 + L * 0.4, tpl = rng.pick(T.stalactite);
-      if (!tubeClear(ctx, p.x, p.s, c - L, c, 0.2 * sx)) continue;
-      st.add(tpl, p.x, c + 0.25, -(p.s - ctx.s0), rotY(rng() * TAU), sx, L, sx, 0.9 + rng() * 0.2, 0.88 + rng() * 0.2, 0.85 + rng() * 0.2, 1);
-    }
+    } });
+    if (comm.logs) more.push(() => { for (let k = 0; k < 5; k++) { const p = spot(ctx, rng, 4.5, 22, 0.9); if (rng() < ctx.weightOf(p.s, 'cave')) lying(p.x, p.s, 0.5 + rng() * 0.5); } });
+    // stalactites hang from the real ceiling (not in openings), head band pushed into the rock
+    more.push(() => {
+      const nextP205 = clusterer(ctx, rng, 3.5, 24, 0.9);
+      for (let k = 0; k < 280 * comm.tites * tk; k++) {
+        const p = nextP205();
+        if (!p) continue;
+        if (rng() > ctx.weightOf(p.s, 'cave')) continue;
+        const c = ctx.ceilingAt(p.x, p.s);
+        if (c > ctx.surfaceY - 0.4) continue;
+        const f = fs.at(p.x, p.s), gap = c - f;
+        if (gap < 1.2) continue;
+        const L = Math.min(gap * 0.5, 0.4 + Math.pow(rng(), 1.4) * 4.5), sx = 0.7 + L * 0.4, tpl = rng.pick(T.stalactite);
+        if (!tubeClear(ctx, p.x, p.s, c - L, c, 0.2 * sx)) continue;
+        hangAt(ctx, mid, tpl, p.x, p.s, rotY(rng() * TAU), sx, L, sx, [0.9 + rng() * 0.2, 0.88 + rng() * 0.2, 0.85 + rng() * 0.2], 1, 0.1);
+      }
+    });
     // columns where the gap is small, away from the path
-    for (let k = 0; k < 40; k++) {
-      const p = spot(ctx, rng, 6, 24, 0.8);
-      if (rng() > ctx.weightOf(p.s, 'cave')) continue;
-      const c = ctx.ceilingAt(p.x, p.s);
-      if (c > ctx.surfaceY - 0.4) continue;
-      const f = fs.at(p.x, p.s), gap = c - f;
-      if (gap < 1.5 || gap > 10) continue;
-      const sx = 0.7 + rng() * 1.2;
-      if (!tubeClear(ctx, p.x, p.s, f, c, 0.55 * sx)) continue;
-      st.add(rng.pick(T.caveColumn), p.x, f - 0.3, -(p.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
-    }
-    // columns on the outside of bends: the camera swings around them
-    for (const b of bendSpots(ctx)) {
-      if (rng() > ctx.weightOf(b.s, 'cave') * 0.85) continue;
-      const sx = 0.9 + rng() * 0.9, x = bendX(ctx, b, 0.62 * sx, rng, 1.0);
-      const c = ctx.ceilingAt(x, b.s), f = fs.at(x, b.s), gap = c - f;
-      if (c > ctx.surfaceY - 0.4 || gap < 1.5 || gap > 14) continue;
-      if (!tubeClear(ctx, x, b.s, f, c, 0.62 * sx)) continue;
-      st.add(rng.pick(T.caveColumn), x, f - 0.3, -(b.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
-    }
-    microDetail(ctx, fs, st, rng, 'cave', sp.micro, 110, 20);
-    // stalagmites and breakdown boulders on the floor (low ones also under the path)
+    more.push(() => {
+      for (let k = 0; k < 40 * comm.cols; k++) {
+        const p = spot(ctx, rng, 6, 24, 0.8);
+        if (rng() > ctx.weightOf(p.s, 'cave')) continue;
+        const c = ctx.ceilingAt(p.x, p.s);
+        if (c > ctx.surfaceY - 0.4) continue;
+        const f = fs.at(p.x, p.s), gap = c - f;
+        if (gap < 1.5 || gap > 10) continue;
+        const sx = 0.7 + rng() * 1.2;
+        if (!tubeClear(ctx, p.x, p.s, f, c, 0.55 * sx)) continue;
+        placeColumn(ctx, fs, st, rng, p.x, p.s, sx);
+      }
+      // columns on the outside of bends: the camera swings around them
+      for (const b of bendSpots(ctx)) {
+        if (rng() > ctx.weightOf(b.s, 'cave') * 0.85) continue;
+        const sx = 0.9 + rng() * 0.9, x = bendX(ctx, b, 0.62 * sx, rng, 1.0);
+        const c = ctx.ceilingAt(x, b.s), f = fs.at(x, b.s), gap = c - f;
+        if (c > ctx.surfaceY - 0.4 || gap < 1.5 || gap > 14) continue;
+        if (!tubeClear(ctx, x, b.s, f, c, 0.62 * sx)) continue;
+        placeColumn(ctx, fs, st, rng, x, b.s, sx);
+      }
+    });
+    more.push(() => microDetail(ctx, fs, near, rng, 'cave', sp.micro, 110, 20));
+    // stalagmites, flowstone and breakdown boulders on the floor (low ones also under the path)
     const nextP239 = clusterer(ctx, rng, 0, 24, 1);
-    for (let k = 0; k < 170; k++) {
-      const p = nextP239();
-      if (!p) continue;
-      if (rng() > ctx.weightOf(p.s, 'cave')) continue;
-      const c = ctx.ceilingAt(p.x, p.s);
-      const r = rng(), spec = c < ctx.surfaceY - 0.4 && r < 0.5 ? sp.mite : r < 0.68 ? sp.flow : sp.rock;
-      putFloor(ctx, fs, st, spec, p.x, p.s, rng);
-    }
-    st.split = 2;
-    return { batches: [st], extra };
+    const floorLife = () => {
+      for (let k = 0; k < 85 * tk; k++) {
+        const p = nextP239();
+        if (!p) continue;
+        if (rng() > ctx.weightOf(p.s, 'cave')) continue;
+        const roof = ctx.ceilingAt(p.x, p.s) < ctx.surfaceY - 0.4;
+        const wM = roof ? 0.5 * comm.mites : 0, wF = (roof ? 0.18 : 0.3) * comm.flow, r = rng() * (wM + wF + 0.32);
+        const spec = r < wM ? sp.mite : r < wM + wF ? (comm.cream ? sp.flowCream : sp.flow) : sp.rock;
+        putFloor(ctx, fs, mid, spec, p.x, p.s, rng);
+      }
+    };
+    more.push(floorLife, floorLife);
+    return { batches: [st, mid, near], extra, more };
   };
 }

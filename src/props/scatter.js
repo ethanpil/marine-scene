@@ -1,5 +1,8 @@
 // Placement helpers shared by the biome populators.
-import { orient, propClear, TAU } from './core.js';
+// Everything placed on the ground is seated on its real contact band (template.foot) over the chunk's
+// composite ground (floor mesh + support props), so nothing floats; ceiling props hang by their top band.
+import { orient, propClear, rotY, TAU, TUBE, poi, tierK } from './core.js';
+import { noise2 } from '../noise.js';
 
 export function pickW(rng, list) {
   let tot = 0;
@@ -10,49 +13,68 @@ export function pickW(rng, list) {
 }
 export const pick = (rng, a) => a[(rng() * a.length) | 0];
 
-// spec: { tpl: Template|Template[], scale: [a,b], ys: [a,b] (y-stretch), xz (depth-stretch amount), follow, sink,
-//         tint(rng) -> rgb, sway (bool: scale fx by size), fa, grow [a,b], tilt, maxSlope, minK,
-//         giant (probability of a rare 2.2-3x showpiece, labelled "Giant ...") }
-// Every placement also gets mild default non-uniform scale, lean and a per-instance texture-key offset.
-// Places at explicit y with normal n. Returns the placed scale, or 0 if rejected.
-// Seat an item on the visible floor: sample the exact floor mesh under its bottom footprint (lowest box
-// corners, plus a grid over the base for big upright items) and return the y that leaves no gap anywhere.
-export function groundY(fs, x, s, tpl, R, sx, sy, sz) {
-  const [x0, y0, z0, x1, y1, z1] = tpl.box;
-  const P = [];
-  for (const cx of [x0, x1]) for (const cy of [y0, y1]) for (const cz of [z0, z1]) P.push([cx * sx, cy * sy, cz * sz]);
-  const w = P.map((p) => [R[0] * p[0] + R[1] * p[1] + R[2] * p[2], R[3] * p[0] + R[4] * p[1] + R[5] * p[2], R[6] * p[0] + R[7] * p[1] + R[8] * p[2]]);
-  let mn = 1e9, mx = -1e9;
-  for (const q of w) { mn = Math.min(mn, q[1]); mx = Math.max(mx, q[1]); }
-  const thr = mn + 0.3 * (mx - mn) + 1e-3;
+// y that puts every contact point (and a grid across wide flat bases) at or below the surface
+// `fs` is the chunk Ground (floor + supports) or any object with at(x, s).
+export function groundY(fs, x, s, tpl, R, sx, sy, sz, few = false) {
+  const at = fs.h ? (px, ps) => fs.h(px, ps) : (px, ps) => fs.at(px, ps);
+  if (R[4] < 0.5) { // lying / capsized: use the lowest band in world orientation
+    const F = tpl.tiltFoot(R, sx, sy, sz);
+    let y = 1e9;
+    for (let i = 0; i < F.length; i += 3) y = Math.min(y, at(x + F[i], s - F[i + 2]) - F[i + 1]);
+    return y;
+  }
+  const [fx0, fz0, fx1, fz1] = tpl.footBox;
+  const ext = Math.max((fx1 - fx0) * sx, (fz1 - fz0) * sz);
+  const F = few || ext < 0.8 ? tpl.footFew : tpl.foot; // small footprints / planar bases: hull + lowest points
+  const r0 = R[0], r1 = R[1], r2 = R[2], r3 = R[3], r4 = R[4], r5 = R[5], r6 = R[6], r7 = R[7], r8 = R[8];
   let y = 1e9;
-  for (const q of w) if (q[1] <= thr) y = Math.min(y, fs.at(x + q[0], s - q[2]) - q[1]);
-  // grid across the base of large, upright items (terrace edges, uneven ground)
-  const ext = Math.max((x1 - x0) * sx, (z1 - z0) * sz);
-  if (R[4] > 0.6 && ext > 0.5) {
-    const n = ext > 8 ? 8 : ext > 3 ? 4 : 2;
+  for (let i = 0; i < F.length; i += 3) {
+    const px = F[i] * sx, py = F[i + 1] * sy, pz = F[i + 2] * sz;
+    y = Math.min(y, at(x + r0 * px + r1 * py + r2 * pz, s - (r6 * px + r7 * py + r8 * pz)) - (r3 * px + r4 * py + r5 * pz));
+  }
+  if (ext > 0.6 && !few) { // flat bases spanning uneven ground: sample the whole base
+    const n = ext > 8 ? 8 : ext > 5 ? 6 : ext > 2 ? 4 : 3, ly = tpl.minY * sy;
     for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) {
-      const lx = (x0 + (x1 - x0) * i / n) * sx, lz = (z0 + (z1 - z0) * j / n) * sz, ly = y0 * sy;
-      const ox = R[0] * lx + R[1] * ly + R[2] * lz, oy = R[3] * lx + R[4] * ly + R[5] * lz, oz = R[6] * lx + R[7] * ly + R[8] * lz;
-      y = Math.min(y, fs.at(x + ox, s - oz) - oy);
+      const lx = (fx0 + (fx1 - fx0) * i / n) * sx, lz = (fz0 + (fz1 - fz0) * j / n) * sz;
+      y = Math.min(y, at(x + r0 * lx + r1 * ly + r2 * lz, s - (r6 * lx + r7 * ly + r8 * lz)) - (r3 * lx + r4 * ly + r5 * lz));
     }
   }
   return y;
 }
 
+// y that pushes every head point (top band) at or above the ceiling, for things hanging from it
+export function ceilY(ctx, x, s, tpl, R, sx, sy, sz) {
+  const H = tpl.head;
+  let y = -1e9;
+  for (let i = 0; i < H.length; i += 3) {
+    const px = H[i] * sx, py = H[i + 1] * sy, pz = H[i + 2] * sz;
+    y = Math.max(y, ctx.ceilingAt(x + R[0] * px + R[1] * py + R[2] * pz, s - (R[6] * px + R[7] * py + R[8] * pz)) - (R[3] * px + R[4] * py + R[5] * pz));
+  }
+  return y;
+}
+
+// spec: { tpl: Template|Template[], scale: [a,b], ys: [a,b] (y-stretch), xz (depth-stretch amount), follow, sink,
+//         tint(rng) -> rgb, sway (bool: scale fx by size), fxScale (scale fx by size), fa, grow [a,b], tilt,
+//         maxSlope, minK, giant (probability of a rare 2.2-3x showpiece, labelled "Giant ..." + POI),
+//         support (others may rest on it; placed upright), occ (footprint occupancy factor), layer,
+//         drape (patch follows the floor vertex by vertex), yaw/yawJ, R }
+// Every placement also gets mild default non-uniform scale, lean and a per-instance texture-key offset.
+// Returns the placed scale, or 0 if rejected.
 export function putAt(ctx, batch, spec, x, y, s, nx, ny, nz, rng, sizeK = 1, fs = null) {
   const tpl = Array.isArray(spec.tpl) ? spec.tpl[(rng() * spec.tpl.length) | 0] : spec.tpl;
   if (spec.maxSlope && ny < spec.maxSlope) return 0;
+  const support = !!(spec.support ?? tpl.support), drape = !!(spec.drape ?? tpl.drape) && !!(fs && fs.fs);
+  if (drape && fs.onSupport(x, s)) return 0; // patches live on the bare floor
   let sc = (spec.scale[0] + (spec.scale[1] - spec.scale[0]) * Math.pow(rng(), 1.3)) * sizeK;
   const giant = spec.giant && rng() < spec.giant;
   if (giant) sc *= 2.2 + rng() * 0.8;
-  const ys = spec.ys ? spec.ys[0] + (spec.ys[1] - spec.ys[0]) * rng() : 0.85 + rng() * 0.32;
+  const ys = spec.ys ? spec.ys[0] + (spec.ys[1] - spec.ys[0]) * rng() : drape ? 1 : 0.85 + rng() * 0.32;
   const minSc = spec.scale[0] * (spec.minK ?? 0.35);
-  const zs = 1 + (rng() - 0.5) * (spec.xz ?? 0.3);
+  const zs = drape ? 1 : 1 + (rng() - 0.5) * (spec.xz ?? 0.3);
   const top = ctx.surfaceY - 0.08;
   const tilt = spec.tilt ?? ((spec.follow ?? 0.6) >= 0.95 ? 0.03 : 0.14);
   const yaw = spec.yaw !== undefined ? spec.yaw + (rng() - 0.5) * (spec.yawJ ?? 0.15) : rng() * TAU;
-  const R = spec.R || orient(nx, ny, nz, spec.follow ?? 0.6, yaw, (rng() - 0.5) * tilt, (rng() - 0.5) * tilt);
+  const R = spec.R || (support || drape ? rotY(yaw) : orient(nx, ny, nz, spec.follow ?? 0.6, yaw, (rng() - 0.5) * tilt, (rng() - 0.5) * tilt));
   const lean = Math.sqrt(R[1] * R[1] + R[7] * R[7]), up = Math.max(0.2, R[4]); // tilted items reach sideways
   let ok = false;
   for (let t = 0; t < 4; t++) {
@@ -62,23 +84,54 @@ export function putAt(ctx, batch, spec, x, y, s, nx, ny, nz, rng, sizeK = 1, fs 
     if (sc < minSc) break;
   }
   if (!ok) return 0;
+  // footprint occupancy: big props do not interpenetrate
+  const occR = spec.occ && fs && fs.free ? Math.max(tpl.footBox[2] - tpl.footBox[0], tpl.footBox[3] - tpl.footBox[1], tpl.r * 0.5) * 0.5 * sc * Math.max(1, zs) * spec.occ : 0;
+  if (occR && !fs.free(x, s, occR, spec.layer || 0)) return 0;
   const c = spec.tint ? spec.tint(rng) : [1, 1, 1];
   let sink = (spec.sink ?? 0.04) * sc * ys + (1 - ny) * tpl.r * sc * 0.5;
-  if (fs) { // seat on the floor mesh under the whole footprint, then embed slightly
+  if (fs) { // seat on the ground under the whole contact band, then embed slightly
     const hgt = (tpl.box[4] - tpl.box[1]) * sc * ys;
-    y = groundY(fs, x, s, tpl, R, sc, sc * ys, sc * zs);
-    sink = Math.min((spec.sink ?? 0.04) * sc * ys, 0.2 * hgt) + 0.01;
+    const yc = y;
+    y = drape ? fs.fs.at(x, s) - tpl.minY * sc : groundY(fs, x, s, tpl, R, sc, sc * ys, sc * zs);
+    if (!drape && yc - y > Math.max(0.3, 0.5 * hgt)) return 0; // straddles a ledge: would be buried deep
+    sink = drape ? 0 : Math.min((spec.sink ?? 0.04) * sc * ys, 0.2 * hgt) + 0.01;
   }
-  const fa = (spec.sway ? sc : 1) * (spec.fa ?? 1) * (spec.grow ? spec.grow[0] + (spec.grow[1] - spec.grow[0]) * rng() : 0.5 + rng());
+  const fa = (spec.sway || spec.fxScale ? sc : 1) * (spec.fa ?? 1) * (spec.grow ? spec.grow[0] + (spec.grow[1] - spec.grow[0]) * rng() : 0.5 + rng());
   if (!batch.add(tpl, x, y - sink, -(s - ctx.s0), R, sc, sc * ys, sc * zs, c[0], c[1], c[2], fa)) return 0;
-  if (fs) batch.items[batch.items.length - 1].g = 1;
-  batch.tag(rng(), giant && tpl.label ? 'Giant ' + tpl.label.charAt(0).toLowerCase() + tpl.label.slice(1) : null);
+  const it = batch.last;
+  if (fs) it.g = 1;
+  if (drape) { it.drape = fs.fs; it.s0 = ctx.s0; }
+  const label = giant && tpl.label ? 'Giant ' + tpl.label.charAt(0).toLowerCase() + tpl.label.slice(1) : null;
+  batch.tag(rng(), label);
+  if (support && fs && fs.addSupport) fs.addSupport(it, s);
+  if (occR) fs.occupy(x, s, occR, spec.layer || 0);
+  if (giant) { const h = tpl.maxY * sc * ys; poi(ctx, 'giant', x, y + h * 0.5, s, Math.max(h, tpl.r * sc), { name: label }); }
   return sc;
 }
 
 export function putFloor(ctx, fs, batch, spec, x, s, rng, sizeK = 1) {
   const y = fs.at(x, s);
   return putAt(ctx, batch, spec, x, y, s, fs.nx, fs.ny, fs.nz, rng, sizeK, fs);
+}
+
+// Hang a prop from the ceiling at (x, s): its top band is pushed into the ceiling surface everywhere.
+// Returns the placed item or null.
+export function hangAt(ctx, batch, tpl, x, s, R, sx, sy, sz, tint = [1, 1, 1], fa = 1, embed = 0.12) {
+  const y = ceilY(ctx, x, s, tpl, R, sx, sy, sz) + embed;
+  if (!batch.add(tpl, x, y, -(s - ctx.s0), R, sx, sy, sz, tint[0], tint[1], tint[2], fa)) return null;
+  const it = batch.last;
+  it.hang = 1;
+  return it;
+}
+
+// Seat a prop placed by hand (fixed rotation/scale) on the ground; returns the item or null.
+export function seat(ctx, gnd, batch, tpl, x, s, R, sx, sy, sz, tint = [1, 1, 1], fa = 1, sink = 0.03, opts = {}) {
+  const y = groundY(gnd, x, s, tpl, R, sx, sy, sz) - sink;
+  if (!batch.add(tpl, x, y, -(s - ctx.s0), R, sx, sy, sz, tint[0], tint[1], tint[2], fa)) return null;
+  const it = batch.last;
+  it.g = 1;
+  if (opts.support && gnd.addSupport) gnd.addSupport(it, s);
+  return it;
 }
 
 // random spot in chunk at lateral distance in [d0, d1] from the path (bias > 1 favours near)
@@ -99,6 +152,7 @@ export function tintFrom(list, amt = 0.15) {
     return [Math.max(0, (r + h * (g - b)) * k), Math.max(0, (g + h * (b - r)) * k), Math.max(0, (b + h * (r - g)) * k)];
   };
 }
+export const grey = (c, amt = 0.15) => tintFrom([c], amt);
 
 // Natural, non-grid distribution: clusters of varied size and count with gaps, occasional singletons,
 // and patch-to-patch density from a noise field. next() -> {x, s, d} or null (rejected by density).
@@ -119,11 +173,8 @@ export function clusterer(ctx, rng, d0, d1, bias = 1.2, { r: [r0, r1] = [0.6, 4]
     return { x, s, d: Math.abs(x - ctx.pathX(s)) };
   };
 }
-import { noise2 } from '../noise.js';
-export const grey = (c, amt = 0.15) => tintFrom([c], amt);
 
 // Solid obstacle on the outside of a bend apex (b from bendSpots): reads dead ahead, camera curves past.
-import { TUBE } from './core.js';
 export function bendX(ctx, b, radius, rng, extra = 1.6) {
   return ctx.pathX(b.s) + b.side * (TUBE + 0.45 + radius + rng() * extra);
 }
@@ -135,10 +186,11 @@ export function putBend(ctx, fs, batch, spec, b, rng) {
   return putAt(ctx, batch, { ...spec, tpl, scale: [sc, sc], tilt: 0, follow: Math.min(spec.follow ?? 0.3, 0.25) }, x, y, b.s, fs.nx, fs.ny, fs.nz, rng, 1, fs) ? x : null;
 }
 
-// Dense low micro detail across the floor, including directly under the path.
+// Dense low micro detail across the floor, including directly under the path (scaled by GPU tier).
 // list: [{ w, spec }] ; n attempts; d1 lateral range
 export function microDetail(ctx, fs, batch, rng, key, list, n, d1 = 30) {
   const next = clusterer(ctx, rng, 0, d1, 1.25, { r: [0.4, 3], n: [2, 9], single: 0.25, patch: 13, seed: 41 });
+  n = Math.round(n * tierK(ctx));
   for (let k = 0; k < n; k++) {
     const p = next();
     if (!p || rng() > ctx.weightOf(p.s, key)) continue;

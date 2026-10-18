@@ -1,7 +1,7 @@
 // Coral reef: bommies (coral heads) built around a massive coral / rock core, plus scattered life.
-import { Builder, Batch, T, TAU, fbm3, vn3, sat, sstep, lerp, floorSampler, presence, budgetK, bendSpots, rotX, rotY, rotZ, mul3 } from './core.js';
+import { Builder, Batch, T, TAU, fbm3, vn3, sat, sstep, lerp, floorSampler, presence, budgetK, bendSpots, rotX, rotY, rotZ, mul3, tierK, poi, pointsClear, placedPoints } from './core.js';
 import { rockInto, branchesInto, seaFan, tubeSponges, softCoral, leatherCoral, anemone, seaWhips, seastar, urchin } from './shapes.js';
-import { putAt, putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer } from './scatter.js';
+import { putAt, putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer, groundY } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -57,11 +57,12 @@ function pillarCoral(seed) {
 
 // one plate (top, underside, rim) at height y, tilted
 function plate(b, seed, Rmax, y0, dish, tx, tz, ox = 0, oz = 0) {
-  const v0 = b.vc, NU = 26;
+  // tessellation follows size: small cups need far fewer segments than a 2 m table
+  const v0 = b.vc, NU = Math.max(12, Math.min(26, Math.round(10 + Rmax * 18))), NT = Rmax < 0.5 ? 3 : 5;
   const R = (a) => Rmax * (1 + 0.18 * vn3(Math.cos(a) * 1.6, Math.sin(a) * 1.6, seed, seed) + 0.05 * Math.sin(a * 9 + seed));
   const Y = (r, a) => dish * r * r + 0.03 * vn3(Math.cos(a) * r * 3, Math.sin(a) * r * 3, 1, seed + 3);
-  b.grid(NU, 5, (u, v, i, j, o) => { const a = u * TAU, r = v * R(a); o[0] = Math.cos(a) * r; o[1] = Y(v, a); o[2] = Math.sin(a) * r; o[3] = o[4] = o[5] = 0.85 + 0.3 * v; o[7] = 2; }, { wrapU: true, flip: true });
-  b.grid(NU, 3, (u, v, i, j, o) => { const a = u * TAU, rv = 1 - v, r = rv * R(a); o[0] = Math.cos(a) * r; o[1] = Y(rv, a) - 0.06 * (1 - 0.6 * rv); o[2] = Math.sin(a) * r; o[3] = o[4] = o[5] = 0.3 + 0.15 * rv; }, { wrapU: true, flip: true });
+  b.grid(NU, NT, (u, v, i, j, o) => { const a = u * TAU, r = v * R(a); o[0] = Math.cos(a) * r; o[1] = Y(v, a); o[2] = Math.sin(a) * r; o[3] = o[4] = o[5] = 0.85 + 0.3 * v; o[7] = 2; }, { wrapU: true, flip: true });
+  b.grid(NU, 2, (u, v, i, j, o) => { const a = u * TAU, rv = 1 - v, r = rv * R(a); o[0] = Math.cos(a) * r; o[1] = Y(rv, a) - 0.06 * (1 - 0.6 * rv); o[2] = Math.sin(a) * r; o[3] = o[4] = o[5] = 0.3 + 0.15 * rv; }, { wrapU: true, flip: true });
   b.grid(NU, 1, (u, v, i, j, o) => { const a = u * TAU, r = R(a); o[0] = Math.cos(a) * r; o[1] = Y(1, a) - 0.035 * v; o[2] = Math.sin(a) * r; o[3] = o[4] = o[5] = 0.9; }, { wrapU: true, flip: true });
   b.xform(v0, mul3(rotX(tx), rotZ(tz)), ox, y0, oz);
 }
@@ -155,23 +156,26 @@ function vaseSponge(seed) {
 }
 
 function giantClam(seed, mantle) {
-  const b = new Builder(), rng = mulberry32(seed), el = 0.42 + rng() * 0.2, ri = 10 + rng() * 6, lipA = 0.025 + rng() * 0.02;
+  const b = new Builder(), rng = mulberry32(seed), el = 0.42 + rng() * 0.2, ri = 10 + rng() * 6, lipA = 0.025 + rng() * 0.02, th = 0.26 + 0.04 * (seed % 3);
   b.blob(3, (x, y, z, o) => {
-    let px = x * el, py = y * 0.24, pz = z * (0.26 + rng() * 0.0 + 0.04 * (seed % 3));
+    let px = x * el, py = y * 0.24, pz = z * th;
     const lip = 0.1 + lipA * Math.sin(x * 24);
     pz *= 1 + 0.12 * Math.abs(Math.sin(x * ri));
     if (py < -0.12) py = -0.12 + (py + 0.12) * 0.2;
-    let c;
+    let c, f = 0;
     if (py > lip) {
       py = lip + (py - lip) * 0.45;
       const sp = vn3(x * 9, y * 9, z * 9, seed) > 0.35 ? 1.6 : 1;
       c = [mantle[0] * sp, mantle[1] * sp, mantle[2] * sp];
+      f = 0.075;                                     // mantle withdraws
     } else {
       const ao = 0.45 + 0.55 * sat((py + 0.12) / 0.22);
       c = [0.72 * ao, 0.7 * ao, 0.64 * ao];
+      if (py > lip - 0.05) f = -0.07 * sat((py - lip + 0.05) / 0.05); // valve lips close in
     }
-    o[0] = px; o[1] = py + 0.12; o[2] = pz; o[3] = c[0]; o[4] = c[1]; o[5] = c[2]; o[6] = 0; o[7] = 2;
+    o[0] = px; o[1] = py + 0.12; o[2] = pz; o[3] = c[0]; o[4] = c[1]; o[5] = c[2]; o[6] = f; o[7] = 8;
   });
+  b.label = 'Giant clam'; b.fact = 'Giant clams farm algae in their mantles and can live for over a century.';
   return b.build();
 }
 
@@ -194,14 +198,14 @@ export function initReef() {
     return b.build();
   });
   T.fan = R(16, (s) => seaFan(s, { h: 0.8 + (s % 5) * 0.2 }));
-  T.tubeSp = R(10, (s) => tubeSponges(s, { n: 1 + (s % 8), h: 0.5 + (s % 5) * 0.22, r: 0.07 + (s % 4) * 0.025 }));
+  T.tubeSp = R(10, (s) => tubeSponges(s, { n: 1 + (s % 8), h: 0.5 + (s % 5) * 0.22, r: 0.07 + (s % 4) * 0.025, rings: 4 }));
   T.barrel = R(8, barrelSponge);
   T.vase = R(6, vaseSponge);
   T.soft = R(14, (s) => softCoral(s, { h: 0.5 + (s % 4) * 0.18 }));
   T.leather = R(6, leatherCoral);
   T.anem = R(12, (k) => anemone(k, k % 2
-    ? { tent: [0.75, 0.85, 0.55], tipC: [1.3, 1.2, 1.1], tentacles: 22 + (k % 7) * 4, thick: 0.035 + 0.003 * (k % 4), tlen: 0.32 + 0.05 * (k % 5) }
-    : { tent: [0.85, 0.55, 0.8], tipC: [1.25, 1.1, 1.3], tlen: 0.28 + 0.05 * (k % 5), tentacles: 26 + (k % 6) * 4, thick: 0.036 }));
+    ? { tent: [0.75, 0.85, 0.55], tipC: [1.3, 1.2, 1.1], tentacles: 22 + (k % 7) * 4, thick: 0.035 + 0.003 * (k % 4), tlen: 0.32 + 0.05 * (k % 5), tseg: 2 }
+    : { tent: [0.85, 0.55, 0.8], tipC: [1.25, 1.1, 1.3], tlen: 0.28 + 0.05 * (k % 5), tentacles: 26 + (k % 6) * 4, thick: 0.036, tseg: 2 }));
   T.whip = R(12, (s) => seaWhips(s, { n: 1 + (s % 8), h: 0.8 + (s % 4) * 0.3 }));
   const M = [[0.08, 0.35, 0.75], [0.06, 0.5, 0.5], [0.35, 0.45, 0.12], [0.4, 0.15, 0.55], [0.6, 0.5, 0.12], [0.15, 0.25, 0.6], [0.3, 0.2, 0.1], [0.05, 0.6, 0.35]];
   T.clam = M.map((m, i) => giantClam(i + 1, m));
@@ -241,10 +245,12 @@ function specs() {
     leather: { tpl: T.leather, scale: [0.9, 1.9], follow: 0.6, sway: true, tint: tintFrom([[0.95, 0.85, 0.45], [0.7, 0.85, 0.4], [1.0, 0.7, 0.55]]) },
     anem: { tpl: T.anem, scale: [1.0, 1.8], follow: 0.7, sway: true, tint: tintFrom([[1.05, 1.0, 1.0], [1.1, 0.8, 1.0]], 0.12) },
     whip: { tpl: T.whip, scale: [0.9, 1.7], follow: 0.2, sway: true, tint: tintFrom([[1.1, 0.4, 0.06], [1.0, 0.1, 0.12], [1.1, 0.85, 0.15]]) },
-    clam: { tpl: T.clam, scale: [0.5, 1.15], follow: 0.8, tint: tintFrom([[1.1, 1.1, 1.1]], 0.1) },
+    clam: { tpl: T.clam, scale: [0.5, 1.15], follow: 0.8, fxScale: true, grow: [1, 1], giant: 0.04, tint: tintFrom([[1.1, 1.1, 1.1]], 0.1) }, // fx = closing distance, scales with size
     star: { tpl: T.star, scale: [0.1, 0.18], follow: 0.95, tint: tintFrom([[1.15, 0.35, 0.05], [1.0, 0.08, 0.08], [0.7, 0.25, 0.95], [0.25, 0.4, 1.1]]), sink: 0 },
     urchin: { tpl: T.urchin, scale: [0.06, 0.11], follow: 0.8, tint: tintFrom([[0.7, 0.45, 0.8], [0.45, 0.35, 0.5]]) },
-    mound: { tpl: T.coralMound, scale: [1.5, 2.6], follow: 0.3, tint: tintFrom(K(MASSIVE, 0.9)), sink: 0.2 },
+    mound: { tpl: T.coralMound, scale: [1.5, 2.6], follow: 0.3, tint: tintFrom(K(MASSIVE, 0.9)), sink: 0.2, support: true, occ: 0.85 },
+    xmas: { tpl: T.xmas, scale: [1.4, 2.4], follow: 0.9, sway: true, grow: [1, 1], tint: tintFrom([[1.1, 0.25, 0.15], [1.1, 0.7, 0.1], [0.2, 0.5, 1.1], [1.0, 1.0, 1.0], [0.8, 0.2, 0.9], [0.2, 0.9, 0.6]], 0.15) },
+    duster: { tpl: T.duster, scale: [1.0, 1.8], follow: 0.8, sway: true, grow: [1, 1], tint: tintFrom([[1.0, 0.55, 0.45], [0.95, 0.85, 0.6], [0.7, 0.45, 0.9], [1.0, 1.0, 0.95]], 0.15) },
   });
   REEF.topList = [
     { w: 1.2, k: 'elkhorn' }, { w: 1.2, k: 'finger' }, { w: 0.7, k: 'pillar' }, { w: 1.4, k: 'plateC' }, { w: 1, k: 'lettuce' }, { w: 0.9, k: 'vase' },
@@ -266,25 +272,63 @@ function specs() {
 }
 
 // One coral head: a massive-coral mound with colonies over its dome and around its foot.
-export function bommie(ctx, fs, st, sw, rng, x, s, moundK, n, coralK, list) {
+// ---------- per-segment communities: dominant species, palette, density, arrangement ----------
+const COMMUNITIES = [
+  { name: 'staghorn thicket', w: { stag: 5, elkhorn: 2 }, rows: 1.1, tint: [1.0, 1.0, 1.0] },
+  { name: 'table-coral terraces', w: { table: 5, plateC: 3 }, rows: 1.0, tint: [1.04, 1.0, 0.95] },
+  { name: 'massive boulder reef', w: { brain: 3, boulder: 4, pillar: 1.5 }, mound: 1.3, rows: 0.9, tint: [1.05, 0.98, 0.9] },
+  { name: 'sponge garden', w: { tubeSp: 4, barrel: 3, vase: 3 }, rows: 1.0, tint: [0.95, 0.98, 1.06] },
+  { name: 'partly bleached reef', bleach: 0.45, rows: 0.95, tint: [1.0, 1.0, 1.0] },
+  { name: 'gorgonian fan forest', w: { fan: 5, whip: 3, soft: 2 }, rows: 1.05, tint: [1.0, 0.95, 1.05] },
+  { name: 'mixed reef', rows: 1.0, tint: [1.0, 1.0, 1.0] },
+];
+export function reefCommunity(ctx) {
+  const seg = ctx.segments.find((g) => g.key === 'reef');
+  if (!seg) return COMMUNITIES[6];
+  return COMMUNITIES[Math.floor(mulberry32(seg.seed ^ 0x2eef)() * COMMUNITIES.length)];
+}
+function listFor(comm) {
   const R = specs();
-  const y0 = fs.at(x, s);
-  const csc = putFloor(ctx, fs, st, R.mound, x, s, rng, moundK);
-  const tpl = T.coralMound[0];
-  const domeR = csc ? tpl.r * csc * 0.8 : 0, domeH = csc ? tpl.maxY * csc * 0.8 : 0;
+  if (!comm || !comm.w) return R.topList;
+  if (!comm._list) comm._list = R.topList.map((e) => ({ ...e, w: e.w * (comm.w[e.k] || 0.6) }));
+  return comm._list;
+}
+// colony tint through the community palette, sometimes bleached white
+function commTint(spec, comm, rng) {
+  const c = spec.tint ? spec.tint(rng) : [1, 1, 1];
+  if (comm && comm.bleach && rng() < comm.bleach) { const k = 0.85 + rng() * 0.25, p = rng() < 0.3 ? [1.0, 0.8, 0.9] : [1, 1, 1]; return [p[0] * k, p[1] * k, p[2] * k]; }
+  const m = comm ? comm.tint : [1, 1, 1];
+  return [c[0] * m[0], c[1] * m[1], c[2] * m[2]];
+}
+
+// small, delicate species are 'near' LOD (gone beyond ~70 m, where fog makes them sub-pixel smudges);
+// structural colonies (tables, plates, staghorn, brains, barrels...) stay 'mid'
+const SMALL = new Set(['soft', 'fan', 'whip', 'finger', 'lettuce', 'anem', 'mushroom', 'leather', 'clam', 'star', 'urchin', 'linckia', 'cots']);
+// One coral head: a massive-coral mound (a support) with colonies seated on its real surface and around
+// its foot. opts: { mid: {st, sw} colony batches, near: {st, sw} small-life batches (worms too), comm }
+export function bommie(ctx, fs, st, sw, rng, x, s, moundK, n, coralK, list, opts = {}) {
+  const R = specs(), comm = opts.comm, nr = opts.near;
+  const cst = opts.mid ? opts.mid.st : st, csw = opts.mid ? opts.mid.sw : sw;
+  const csc = putFloor(ctx, fs, st, R.mound, x, s, rng, moundK * (comm && comm.mound || 1));
+  const tpl = T.coralMound[0], domeR = csc ? tpl.r * csc * 0.9 : 0.6;
+  const L = list || listFor(comm);
+  n = Math.max(1, Math.round(n * tierK(ctx)));
   for (let k = 0; k < n; k++) {
-    const e = pickW(rng, list || R.topList), sp = R[e.k];
-    const a = rng() * TAU, rr = (domeR + 1.2) * Math.sqrt(rng());
+    const e = pickW(rng, L), sp = R[e.k];
+    const a = rng() * TAU, rr = (domeR + 1.0) * Math.sqrt(rng());
     const ix = x + Math.cos(a) * rr, is = s + Math.sin(a) * rr;
-    let y = fs.at(ix, is), nx = fs.nx, ny = fs.ny, nz = fs.nz;
-    if (rr < domeR) { // on top of the dome
-      const q = rr / domeR, dh = domeH * Math.sqrt(Math.max(0, 1 - q * q));
-      y = Math.max(y, y0 + dh - 0.12);
-      const l = Math.hypot(Math.cos(a) * q * 0.8, 1, Math.sin(a) * q * 0.8);
-      nx = Math.cos(a) * q * 0.8 / l; ny = 1 / l; nz = -Math.sin(a) * q * 0.8 / l;
-    }
-    putAt(ctx, e.sway ? sw : st, sp, ix, y, is, nx, ny, nz, rng, coralK);
+    const spec = comm ? { ...sp, tint: (r) => commTint(sp, comm, r), occ: 0.55, layer: 1 } : { ...sp, occ: 0.55, layer: 1 };
+    const small = nr && SMALL.has(e.k);
+    putFloor(ctx, fs, e.sway ? (small ? nr.sw : csw) : small ? nr.st : cst, spec, ix, is, rng, coralK);
   }
+  // tiny delights on the coral head: christmas-tree worms and feather dusters (retract when you come close)
+  if (nr && csc) {
+    for (let k = 0; k < 1 + Math.floor(rng() * 3); k++) {
+      const a = rng() * TAU, rr = domeR * 0.8 * Math.sqrt(rng());
+      putFloor(ctx, fs, nr.sw, rng() < 0.65 ? R.xmas : R.duster, x + Math.cos(a) * rr, s + Math.sin(a) * rr, rng);
+    }
+  }
+  return csc;
 }
 
 // Coral banks line both sides of a sandy valley: rows of coral heads, densest near the path.
@@ -295,44 +339,127 @@ const ROWS = [
   { d: [15, 25], step: 6.5, m: 1.05, n: 4, k: 1.1 },
   { d: [25, 36], step: 9.0, m: 1.2, n: 1, k: 1.1 },
 ];
+const pathYaw = (ctx, s) => Math.atan2(-(ctx.pathX(s + 3) - ctx.pathX(s - 3)), 6);
+
+// per-segment set pieces: one cleaning station, natural arches every 300-700 m (deterministic)
+const segSets = new Map();
+function reefSet(seg) {
+  let S = segSets.get(seg.id);
+  if (S && S.seed === seg.seed) return S;
+  const rng = mulberry32(seg.seed ^ 0xc1ea), len = seg.end - seg.start;
+  S = { seed: seg.seed, station: seg.start + 140 + rng() * Math.max(10, len - 280), side: rng() < 0.5 ? -1 : 1, arches: [] };
+  for (let a = seg.start + 160 + rng() * 200; a < seg.end - 160; a += 300 + rng() * 400) S.arches.push({ s: a, k: (rng() * 1e9) | 0 });
+  segSets.set(seg.id, S);
+  if (segSets.size > 24) segSets.delete(segSets.keys().next().value);
+  return S;
+}
+
+// natural rock arch spanning the path, crowned with colonies
+export function placeArch(ctx, gnd, st, mid, rng, s, list, label = null) {
+  const tpl = list[(rng() * list.length) | 0], R = rotY(pathYaw(ctx, s) + (rng() - 0.5) * 0.2);
+  const x = ctx.pathX(s), y = ctx.pathY(s) - 0.1;
+  // both legs' contact bands must sit well inside the floor (they end tpl.arch.depth below the path)
+  if (groundY({ at: (px, ps) => gnd.floor(px, ps) }, x, s, tpl, R, 1, 1, 1) < y + 0.3) return null;
+  const A = tpl.arch.A;
+  if (!pointsClear(ctx, placedPoints(tpl, x, y, s, R, 1, 1, 1, 600), 0.45)) return null;
+  if (!st.add(tpl, x, y, -(s - ctx.s0), R, 1, 1, 1, 0.95 + rng() * 0.1, 0.92 + rng() * 0.1, 0.9 + rng() * 0.1, 0.7 + rng() * 0.6)) return null;
+  const it = st.last;
+  it.g = 1;
+  if (label) it.lbl = label;
+  gnd.addSupport(it, s);
+  for (const sd of [-1, 1]) gnd.occupy(x + sd * A * Math.cos(pathYaw(ctx, s)), s, 2.5, 0);
+  poi(ctx, 'arch', x, y, s, A, { kind: 'rock arch' });
+  return it;
+}
+
 export function layoutReef(ctx) {
   const pres = presence(ctx, 'reef');
   if (pres <= 0) return null;
-  const R = specs(), rng = ctx.rng, fs = floorSampler(ctx), bk = budgetK(ctx, 'reef');
-  const st = new Batch(MAT.static, 106000 * bk), sw = new Batch(MAT.sway, 46000 * bk);
-  for (const row of ROWS) {
-    for (const side of [-1, 1]) {
-      for (let s = ctx.s0 + rng() * row.step; s < ctx.s1; s += row.step * (0.75 + 0.5 * rng())) {
-        if (rng() > ctx.weightOf(s, 'reef')) continue;
-        const x = ctx.pathX(s) + side * lerp(row.d[0], row.d[1], rng());
-        bommie(ctx, fs, st, sw, rng, x, s, row.m * (0.8 + 0.4 * rng()), row.n + (rng() < 0.5 ? 1 : 0), row.k, null);
+  const R = specs(), rng = ctx.rng, fs = floorSampler(ctx), bk = budgetK(ctx, 'reef'), tk = tierK(ctx), comm = reefCommunity(ctx);
+  const st = new Batch(MAT.static, 34000 * bk);                       // coral heads, arches, ledges
+  const mid = { st: new Batch(MAT.static, 86000 * bk * tk, 'mid'), sw: new Batch(MAT.sway, 42000 * bk * tk, 'mid') };
+  const near = { st: new Batch(MAT.static, 30000 * bk * tk, 'near'), sw: new Batch(MAT.sway, 44000 * bk * tk, 'near') }; // small life, worms
+  const idx = Math.floor(ctx.s0 / 64);
+  // set pieces anchored to the segment
+  for (const seg of ctx.segments) {
+    if (seg.key !== 'reef') continue;
+    const S = reefSet(seg);
+    for (const a of S.arches) if (Math.floor((a.s + 3) / 64) === idx) {
+      const ar = placeArch(ctx, fs, st, mid, mulberry32(a.k), a.s, T.arch);
+      if (ar) { // colonies on the crown
+        const ar2 = mulberry32(a.k + 1), A = ar.tpl.arch.A, yaw = pathYaw(ctx, a.s);
+        for (let k = 0; k < 18; k++) {
+          const t = (ar2() - 0.5) * 1.3, ox = Math.cos(yaw) * A * t, os = Math.sin(yaw) * A * t + (ar2() - 0.5) * 1.2;
+          const e = pickW(ar2, listFor(comm)), small = SMALL.has(e.k);
+          putFloor(ctx, fs, e.sway ? (small ? near.sw : mid.sw) : small ? near.st : mid.st, { ...R[e.k], tint: (r) => commTint(R[e.k], comm, r) }, ctx.pathX(a.s) + ox, a.s + os, ar2, 0.9);
+        }
       }
     }
+    if (Math.floor(S.station / 64) === idx) { // cleaning station: a big, busy coral head
+      const xs = ctx.pathX(S.station) + S.side * (8 + rng() * 3);
+      const csc = bommie(ctx, fs, st, mid.sw, rng, xs, S.station, 1.5, 14, 1.15, null, { mid, near, comm });
+      const top = fs.at(xs, S.station);
+      poi(ctx, 'cleaning-station', xs, top + 3, S.station, 7, { comm: comm.name });
+      if (ctx.addLabel) ctx.addLabel('Cleaning station', xs, top + 1.5, S.station, 'Mantas and groupers queue here while cleaner wrasse and shrimp pick off parasites.');
+    }
   }
-  // coral heads on the outside of bends: seen dead ahead, the camera curves past
-  for (const b of bendSpots(ctx)) {
-    if (rng() > ctx.weightOf(b.s, 'reef') * 0.85) continue;
-    bommie(ctx, fs, st, sw, rng, bendX(ctx, b, T.coralMound[0].r * 2.4, rng, 1.2), b.s, 1.25, 10, 1.1, null);
-  }
-  st.split = 4; sw.split = 4;
-  return { batches: [st, sw] };
+  // coral banks, one row per stage (each row of coral heads is a few ms of seating work)
+  const more = ROWS.flatMap((row) => [-1, 1].map((side) => () => {
+    for (let s = ctx.s0 + rng() * row.step; s < ctx.s1; s += row.step * (0.75 + 0.5 * rng()) / (comm.rows || 1)) {
+      if (rng() > ctx.weightOf(s, 'reef')) continue;
+      const x = ctx.pathX(s) + side * lerp(row.d[0], row.d[1], rng());
+      bommie(ctx, fs, st, mid.sw, rng, x, s, row.m * (0.8 + 0.4 * rng()), row.n + (rng() < 0.5 ? 1 : 0), row.k, null, { mid, near, comm });
+    }
+  }));
+  more.push(() => {
+    // coral heads on the outside of bends: seen dead ahead, the camera curves past
+    for (const b of bendSpots(ctx)) {
+      if (rng() > ctx.weightOf(b.s, 'reef') * 0.85) continue;
+      bommie(ctx, fs, st, mid.sw, rng, bendX(ctx, b, T.coralMound[0].r * 2.4, rng, 1.2), b.s, 1.25, 10, 1.1, null, { mid, near, comm });
+    }
+    // an overhanging ledge now and then (lobsters and sweepers shelter beneath)
+    if (rng() < 0.45 * pres) placeLedge(ctx, fs, st, rng, T.ledge);
+  });
+  return { batches: [st, mid.st, mid.sw, near.st, near.sw], more };
 }
 
-// second layout chain: floor micro detail + small life (incl. under the camera)
+// rock overhang beside the path, lip facing the camera
+export function placeLedge(ctx, gnd, st, rng, list) {
+  const s = ctx.s0 + 8 + rng() * 48, side = rng() < 0.5 ? -1 : 1, tpl = list[(rng() * list.length) | 0], sc = 0.85 + rng() * 0.4;
+  const yaw = (side > 0 ? Math.PI : 0) + pathYaw(ctx, s) + (rng() - 0.5) * 0.4, R = rotY(yaw);
+  for (let d = 4.2 + tpl.r * sc; d < 10 + tpl.r * sc; d += 0.8) {
+    const x = ctx.pathX(s) + side * d;
+    if (!gnd.free(x, s, tpl.r * sc * 0.6, 0)) continue;
+    const y = groundY(gnd, x, s, tpl, R, sc, sc, sc) - 0.15;
+    if (!pointsClear(ctx, placedPoints(tpl, x, y, s, R, sc, sc, sc, 400), 0.45)) continue;
+    if (!st.add(tpl, x, y, -(s - ctx.s0), R, sc, sc, sc, 1, 1, 1, 0.8 + rng() * 0.5)) return null;
+    const it = st.last;
+    it.g = 1;
+    gnd.addSupport(it, s);
+    gnd.occupy(x, s, tpl.r * sc * 0.6, 0);
+    const m = tpl.ledge, wx = x + (R[0] * m.x + R[2] * m.z) * sc, ws = s - (R[6] * m.x + R[8] * m.z) * sc;
+    poi(ctx, 'ledge', wx, y + m.y * sc, ws, 2.5 * sc);
+    return it;
+  }
+  return null;
+}
+
+// second layout chain: floor micro detail + small life (incl. under the camera), drawn near only
 export function layoutReefMicro(ctx) {
   if (presence(ctx, 'reef') <= 0) return null;
-  const R = specs(), rng = mulberry32((ctx.s0 * 2654435761) ^ 0x51f), fs = floorSampler(ctx), bk = budgetK(ctx, 'reef');
-  const st = new Batch(MAT.static, 22000 * bk), sw = new Batch(MAT.sway, 8000 * bk);
+  const R = specs(), rng = mulberry32((ctx.s0 * 2654435761) ^ 0x51f), fs = floorSampler(ctx), bk = budgetK(ctx, 'reef'), tk = tierK(ctx);
+  const st = new Batch(MAT.static, 24000 * bk * tk, 'near'), sw = new Batch(MAT.sway, 8000 * bk * tk, 'near');
   microDetail(ctx, fs, st, rng, 'reef', R.micro, 130, 26);
-  // small life everywhere, also under the camera
-  const nextP329 = clusterer(ctx, rng, 0, 14, 1);
-  for (let k = 0; k < 90; k++) {
-    const p = nextP329();
-    if (!p) continue;
-    if (rng() > ctx.weightOf(p.s, 'reef') * 0.8) continue;
-    const e = pickW(rng, R.smallList);
-    putFloor(ctx, fs, e.sway ? sw : st, R[e.k], p.x, p.s, rng, 0.8);
-  }
-  st.split = 1; sw.split = 1;
-  return { batches: [st, sw] };
+  // small life everywhere, also under the camera (next stage)
+  const life = () => {
+    const nextP = clusterer(ctx, rng, 0, 14, 1);
+    for (let k = 0; k < 90 * tk; k++) {
+      const p = nextP();
+      if (!p) continue;
+      if (rng() > ctx.weightOf(p.s, 'reef') * 0.8) continue;
+      const e = pickW(rng, R.smallList);
+      putFloor(ctx, fs, e.sway ? sw : st, R[e.k], p.x, p.s, rng, 0.8);
+    }
+  };
+  return { batches: [st, sw], more: [life] };
 }

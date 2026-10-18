@@ -147,7 +147,7 @@ export function seastar(seed, { arms = 5, fat = 2.2, detail = 3, curl = 0.06, th
   return b.build();
 }
 
-export function anemone(seed, { tentacles = 52, tlen = 0.55, rows = 3, body = [0.55, 0.42, 0.38], tent = [0.7, 0.9, 0.6], tipC = [1.2, 1.1, 1.3], disc = 0.3, height = 0.25, thick = 0.035 } = {}) {
+export function anemone(seed, { tentacles = 52, tlen = 0.55, rows = 3, body = [0.55, 0.42, 0.38], tent = [0.7, 0.9, 0.6], tipC = [1.2, 1.1, 1.3], disc = 0.3, height = 0.25, thick = 0.035, tseg = 3 } = {}) {
   const b = new Builder(), rng = mulberry32(seed);
   b.lathe(12, 3, (v) => [disc * (0.85 + 0.25 * v + (v > 0.9 ? 0.05 : 0)), v * height], null, (v, a, x, y, z, o) => {
     const ao = 0.45 + 0.55 * v; o[3] = body[0] * ao; o[4] = body[1] * ao; o[5] = body[2] * ao; o[6] = 0.02 * v; o[7] = 0;
@@ -164,10 +164,10 @@ export function anemone(seed, { tentacles = 52, tlen = 0.55, rows = 3, body = [0
     let d = norm([out[0] * (0.35 + row * 0.25), 1, out[2] * (0.35 + row * 0.25)]);
     let p = [out[0] * rr, height, out[2] * rr];
     const L = tlen * (0.5 + 0.9 * rng()) * (1 - row * 0.12), pts = [p], radii = [thick * (0.75 + 0.5 * rng())];
-    for (let k = 1; k <= 3; k++) {
-      d = norm([d[0] + out[0] * 0.45, d[1] - 0.24, d[2] + out[2] * 0.45]);
-      p = [p[0] + d[0] * L / 3, p[1] + d[1] * L / 3, p[2] + d[2] * L / 3];
-      pts.push(p); radii.push(thick * (1 - k / 4));
+    for (let k = 1; k <= tseg; k++) {
+      d = norm([d[0] + out[0] * 0.45 * 3 / tseg, d[1] - 0.24 * 3 / tseg, d[2] + out[2] * 0.45 * 3 / tseg]);
+      p = [p[0] + d[0] * L / tseg, p[1] + d[1] * L / tseg, p[2] + d[2] * L / tseg];
+      pts.push(p); radii.push(thick * (1 - k / (tseg + 1)));
     }
     b.tube(pts, radii, 3, (v, ang, x, y, z, o) => {
       const t = v; o[3] = lerp(tent[0], tipC[0] * tent[0], t); o[4] = lerp(tent[1], tipC[1] * tent[1], t); o[5] = lerp(tent[2], tipC[2] * tent[2], t);
@@ -177,7 +177,7 @@ export function anemone(seed, { tentacles = 52, tlen = 0.55, rows = 3, body = [0
   return b.build();
 }
 
-export function tubeSponges(seed, { n = 4, h = 1, r = 0.12 } = {}) {
+export function tubeSponges(seed, { n = 4, h = 1, r = 0.12, rings = 6 } = {}) {
   const b = new Builder(), rng = mulberry32(seed);
   for (let k = 0; k < n; k++) {
     const hh = h * (0.5 + 0.6 * rng()), rr = r * (0.75 + 0.5 * rng());
@@ -185,7 +185,7 @@ export function tubeSponges(seed, { n = 4, h = 1, r = 0.12 } = {}) {
     const lean = [(rng() - 0.5) * 0.25, (rng() - 0.5) * 0.25];
     const v0 = b.vc;
     const prof = (v) => rr * (0.8 + 0.3 * v + 0.06 * Math.sin(v * 9 + k));
-    b.lathe(10, 6, (v) => [prof(v), v * hh], (a, v) => 1 + 0.05 * vn3(Math.cos(a) * 2, v * 4, Math.sin(a) * 2, seed + k), (v, a, x, y, z, o) => {
+    b.lathe(10, rings, (v) => [prof(v), v * hh], (a, v) => 1 + 0.05 * vn3(Math.cos(a) * 2, v * 4, Math.sin(a) * 2, seed + k), (v, a, x, y, z, o) => {
       const ao = 0.35 + 0.65 * sstep(0, 0.5, v); o[3] = o[4] = o[5] = ao; o[6] = 0; o[7] = 2;
     });
     // rim
@@ -400,8 +400,9 @@ export function pebblePatch(seed, { n = 16, r = 0.5, size = 0.05, flat = 0.5, co
     const el = 1 + (elong - 1) * rng(), k2 = 0.75 + 0.5 * rng(), seedK = (rng() * 100) | 0;
     b.blob(0, (x, y, z, o) => {
       const d = 1 + 0.3 * vn3(x * 2 + seedK, y * 2, z * 2, seed);
-      const lx = x * sz * el * d, lz = z * sz * d, ly = Math.max(-0.3, y) * sz * flat * d;
-      o[0] = cx + cy * lx - sy * lz; o[1] = ly + sz * flat * 0.25; o[2] = cz + sy * lx + cy * lz;
+      const lx = x * sz * el * d, lz = z * sz * d, ly = Math.max(-0.3, y) * sz * flat * d, b0 = 0.21 * sz * flat;
+      // every pebble's underside is flush with y = 0 (partly buried), so a draped patch has no hovering stones
+      o[0] = cx + cy * lx - sy * lz; o[1] = Math.max(ly, -b0) + b0; o[2] = cz + sy * lx + cy * lz;
       const ao = y < 0 ? 0.55 : 1;
       o[3] = col[0] * k2 * ao; o[4] = col[1] * k2 * ao; o[5] = col[2] * k2 * ao; o[6] = growth; o[7] = mode;
     });

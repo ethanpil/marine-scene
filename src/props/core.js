@@ -230,6 +230,32 @@ export class Builder {
   build() { return new Template(this); }
 }
 
+// vertex positions satisfying pred(y), at most `max`: spatially stratified so every part of the band
+// (each paw, each leg) keeps its extreme point (lowest for a foot band, highest for a head band),
+// then filled evenly. Returns { pts, box: [x0, z0, x1, z1] of the whole band }.
+function bandPoints(pos, pred, max, low = true) {
+  const idx = [];
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+  for (let i = 0; i < pos.length; i += 3) if (pred(pos[i + 1])) {
+    idx.push(i);
+    x0 = Math.min(x0, pos[i]); x1 = Math.max(x1, pos[i]); z0 = Math.min(z0, pos[i + 2]); z1 = Math.max(z1, pos[i + 2]);
+  }
+  let pick = idx;
+  if (idx.length > max) {
+    const g = 7, cx = (x1 - x0) / g + 1e-6, cz = (z1 - z0) / g + 1e-6, best = new Map();
+    for (const i of idx) {
+      const k = Math.min(g - 1, Math.floor((pos[i] - x0) / cx)) * g + Math.min(g - 1, Math.floor((pos[i + 2] - z0) / cz)), b = best.get(k);
+      if (b === undefined || (low ? pos[i + 1] < pos[b + 1] : pos[i + 1] > pos[b + 1])) best.set(k, i);
+    }
+    const set = new Set(best.values()), step = idx.length / Math.max(1, max - set.size);
+    for (let k = 0; k < idx.length && set.size < max; k += step) set.add(idx[Math.floor(k)]);
+    pick = [...set];
+  }
+  const out = [];
+  for (const i of pick) out.push(pos[i], pos[i + 1], pos[i + 2]);
+  return { pts: Float32Array.from(out), box: [x0, z0, x1, z1] };
+}
+
 // ---------- Template: immutable geometry variant ----------
 export class Template {
   constructor(b) {
@@ -250,8 +276,93 @@ export class Template {
     this.box = [x0, minY, z0, x1, maxY, z1];
     this.obs = b.obs || null;      // explicit obstacle capsules [ax,ay,az,bx,by,bz,r] (template space)
     this.label = b.label || null;  // common name for the "i" overlay
+    this.fact = b.fact || null;    // optional one-line fun fact for the overlay
     this.solid = b.solid ?? true;
-    this._geo = null; this._pts = null;
+    this.support = b.support || false; // other props may rest on top of it (exact top-surface raycast)
+    this.drape = b.drape || false;     // flat patch: follows the floor mesh vertex by vertex
+    this.dLift = b.dLift || 0;         // draped patches: raise the base this much (thin things lie ON the sand)
+    // contact band (what touches the ground) and head band (what touches a ceiling), template space
+    const band = b.band ?? Math.max(0.02, 0.06 * (maxY - minY)); // b.band: explicit override
+    this.band = band;
+    const fb = bandPoints(this.pos, (y) => y <= minY + band, 96, true);
+    this.foot = fb.pts; this.footBox = fb.box;
+    this.head = bandPoints(this.pos, (y) => y >= maxY - band, 64, false).pts;
+    this._geo = null; this._pts = null; this._rb = null;
+  }
+  // Few-point contact set for small footprints: the band's convex hull in xz plus its 4 lowest points.
+  get footFew() {
+    if (this._ff) return this._ff;
+    const F = this.foot, n = F.length / 3;
+    if (n <= 16) return (this._ff = F);
+    const idx = Array.from({ length: n }, (_, i) => i).sort((a, b) => F[a * 3] - F[b * 3] || F[a * 3 + 2] - F[b * 3 + 2]);
+    const cross = (o, a, b) => (F[a * 3] - F[o * 3]) * (F[b * 3 + 2] - F[o * 3 + 2]) - (F[a * 3 + 2] - F[o * 3 + 2]) * (F[b * 3] - F[o * 3]);
+    const lo = [], hi = [];
+    for (const i of idx) { while (lo.length > 1 && cross(lo[lo.length - 2], lo[lo.length - 1], i) <= 0) lo.pop(); lo.push(i); }
+    for (let k = idx.length - 1; k >= 0; k--) { const i = idx[k]; while (hi.length > 1 && cross(hi[hi.length - 2], hi[hi.length - 1], i) <= 0) hi.pop(); hi.push(i); }
+    let hull = lo.slice(0, -1).concat(hi.slice(0, -1));
+    if (hull.length > 12) { const st = hull.length / 12; hull = Array.from({ length: 12 }, (_, k) => hull[Math.floor(k * st)]); }
+    const low = Array.from({ length: n }, (_, i) => i).sort((a, b) => F[a * 3 + 1] - F[b * 3 + 1]).slice(0, 4);
+    const out = [];
+    for (const i of new Set([...hull, ...low])) out.push(F[i * 3], F[i * 3 + 1], F[i * 3 + 2]);
+    return (this._ff = Float32Array.from(out));
+  }
+  // Height of the BOTTOM surface along the vertical line through local (lx, lz); +Infinity if none.
+  rayUp(lx, lz) {
+    const R = this._rb || this._buildRay();
+    const i = Math.floor((lx - R.x0) / R.cs), j = Math.floor((lz - R.z0) / R.cs);
+    if (i < 0 || j < 0 || i >= R.n || j >= R.n) return Infinity;
+    const list = R.cells[j * R.n + i];
+    if (!list) return Infinity;
+    const P = this.pos, I = this.idx;
+    let best = Infinity;
+    for (let q = 0; q < list.length; q++) {
+      const t = list[q] * 3, a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+      const x0 = P[a], z0 = P[a + 2], x1 = P[b], z1 = P[b + 2], x2 = P[c], z2 = P[c + 2];
+      const d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+      if (d > -1e-12 && d < 1e-12) continue;
+      const w0 = ((z1 - z2) * (lx - x2) + (x2 - x1) * (lz - z2)) / d;
+      const w1 = ((z2 - z0) * (lx - x2) + (x0 - x2) * (lz - z2)) / d;
+      const w2 = 1 - w0 - w1;
+      if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
+      const y = w0 * P[a + 1] + w1 * P[b + 1] + w2 * P[c + 1];
+      if (y < best) best = y;
+    }
+    return best;
+  }
+  // Exact height of the TOP surface along the vertical line through local (lx, lz); -Infinity if none.
+  rayDown(lx, lz) {
+    const R = this._rb || this._buildRay();
+    const i = Math.floor((lx - R.x0) / R.cs), j = Math.floor((lz - R.z0) / R.cs);
+    if (i < 0 || j < 0 || i >= R.n || j >= R.n) return -Infinity;
+    const list = R.cells[j * R.n + i];
+    if (!list) return -Infinity;
+    const P = this.pos, I = this.idx;
+    let best = -Infinity;
+    for (let q = 0; q < list.length; q++) {
+      const t = list[q] * 3, a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+      const x0 = P[a], z0 = P[a + 2], x1 = P[b], z1 = P[b + 2], x2 = P[c], z2 = P[c + 2];
+      const d = (z1 - z2) * (x0 - x2) + (x2 - x1) * (z0 - z2);
+      if (d > -1e-12 && d < 1e-12) continue;
+      const w0 = ((z1 - z2) * (lx - x2) + (x2 - x1) * (lz - z2)) / d;
+      const w1 = ((z2 - z0) * (lx - x2) + (x0 - x2) * (lz - z2)) / d;
+      const w2 = 1 - w0 - w1;
+      if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
+      const y = w0 * P[a + 1] + w1 * P[b + 1] + w2 * P[c + 1];
+      if (y > best) best = y;
+    }
+    return best;
+  }
+  _buildRay() {
+    const [x0, , z0, x1, , z1] = this.box, ext = Math.max(x1 - x0, z1 - z0, 1e-3);
+    const n = Math.max(4, Math.min(48, Math.round(ext / 0.18))), cs = ext / n * 1.0001;
+    const cells = new Array(n * n), P = this.pos, I = this.idx;
+    for (let t = 0; t < I.length / 3; t++) {
+      const a = I[t * 3] * 3, b = I[t * 3 + 1] * 3, c = I[t * 3 + 2] * 3;
+      const i0 = Math.max(0, Math.floor((Math.min(P[a], P[b], P[c]) - x0) / cs)), i1 = Math.min(n - 1, Math.floor((Math.max(P[a], P[b], P[c]) - x0) / cs));
+      const j0 = Math.max(0, Math.floor((Math.min(P[a + 2], P[b + 2], P[c + 2]) - z0) / cs)), j1 = Math.min(n - 1, Math.floor((Math.max(P[a + 2], P[b + 2], P[c + 2]) - z0) / cs));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const k = j * n + i; (cells[k] || (cells[k] = [])).push(t); }
+    }
+    return (this._rb = { x0, z0, cs, n, cells });
   }
   // obstacle capsules: explicit, or one capsule fitted to the bounding box
   obstacles() {
@@ -279,30 +390,53 @@ export class Template {
   }
   // subsample of vertices for clearance tests of big set pieces
   points(max = 300) {
-    if (!this._pts) {
-      const step = Math.max(1, Math.floor(this.vc / max)), p = [];
+    const C = this._pts || (this._pts = new Map());
+    let p = C.get(max);
+    if (!p) {
+      const step = Math.max(1, Math.floor(this.vc / max));
+      p = [];
       for (let i = 0; i < this.vc; i += step) p.push(this.pos[i * 3], this.pos[i * 3 + 1], this.pos[i * 3 + 2]);
-      this._pts = p;
+      C.set(max, p);
     }
-    return this._pts;
+    return p;
+  }
+  // Contact band for a heavily tilted placement (lying trees, toppled drums, capsized hulls): the lowest
+  // band of vertices in WORLD orientation. Returns world-relative offsets [dx, dy, dz, ...] (z = local z).
+  tiltFoot(R, sx, sy, sz, max = 64) {
+    const P = this.pos, n = this.vc, wy = new Float32Array(n);
+    let lo = 1e9, hi = -1e9;
+    for (let i = 0; i < n; i++) {
+      const y = R[3] * P[i * 3] * sx + R[4] * P[i * 3 + 1] * sy + R[5] * P[i * 3 + 2] * sz;
+      wy[i] = y; if (y < lo) lo = y; if (y > hi) hi = y;
+    }
+    const band = Math.max(0.02, 0.06 * (hi - lo)), idx = [];
+    for (let i = 0; i < n; i++) if (wy[i] <= lo + band) idx.push(i);
+    const step = Math.max(1, idx.length / max), out = [];
+    for (let k = 0; k < idx.length; k += step) {
+      const i = idx[Math.floor(k)], px = P[i * 3] * sx, py = P[i * 3 + 1] * sy, pz = P[i * 3 + 2] * sz;
+      out.push(R[0] * px + R[1] * py + R[2] * pz, wy[i], R[6] * px + R[7] * py + R[8] * pz);
+    }
+    return out;
   }
 }
 
 // ---------- Batch: merges template instances into one mesh per chunk ----------
 export class Batch {
-  constructor(material, maxTris = 120000) {
-    this.mat = material; this.max = maxTris; this.items = []; this.vc = 0; this.ic = 0;
+  // lod: null (always drawn), 'mid' or 'near' (the core hides these with distance)
+  constructor(material, maxTris = 120000, lod = null) {
+    this.mat = material; this.max = maxTris; this.items = []; this.vc = 0; this.ic = 0; this.lod = lod;
   }
   get tris() { return this.ic / 3; }
   // place template with rotation R (row-major 3x3), scale, tint and fx.x multiplier
   add(tpl, x, y, z, R, sx, sy = sx, sz = sx, cr = 1, cg = 1, cb = 1, fa = 1) {
     if (!tpl || (this.ic + tpl.idx.length) / 3 > this.max) return false;
-    this.items.push({ tpl, x, y, z, R, sx, sy, sz, cr, cg, cb, fa, ko: 0, lbl: null });
+    this.items.push({ tpl, x, y, z, R, sx, sy, sz, cr, cg, cb, fa, ko: 0, lbl: null, fact: null, g: 0, hang: 0, drape: null, s0: 0 });
     this.vc += tpl.vc; this.ic += tpl.idx.length;
     return true;
   }
   // per-instance extras for the last added item: texture-key offset, label override
-  tag(ko, lbl) { const it = this.items[this.items.length - 1]; if (it) { it.ko = ko; it.lbl = lbl; } }
+  tag(ko, lbl, fact = null) { const it = this.items[this.items.length - 1]; if (it) { it.ko = ko; it.lbl = lbl; if (fact) it.fact = fact; } }
+  get last() { return this.items[this.items.length - 1]; }
   // Split items into n slices of similar vertex count; build(k, n) merges slice k only.
   build(k = 0, n = 1, pad = 1) {
     if (!this.items.length) return null;
@@ -332,13 +466,15 @@ export class Batch {
       const cr = it.cr, cg = it.cg, cb = it.cb, fa = it.fa, ko = it.ko;
       const uni = sx === sy && sy === sz;
       const isx = 1 / sx, isy = 1 / sy, isz = 1 / sz;
-      const nv = t.vc, ob = vo * 3;
+      const nv = t.vc, ob = vo * 3, dr = it.drape, minY = t.minY, ds0 = it.s0, dl = t.dLift - 0.012;
       for (let k3 = 0, e = nv * 3; k3 < e; k3 += 3) {
         const o = ob + k3;
         const px = P[k3] * sx, py = P[k3 + 1] * sy, pz = P[k3 + 2] * sz;
         pos[o] = r0 * px + r1 * py + r2 * pz + tx;
         pos[o + 1] = r3 * px + r4 * py + r5 * pz + ty;
         pos[o + 2] = r6 * px + r7 * py + r8 * pz + tz;
+        // draped patches follow the floor mesh exactly, vertex by vertex
+        if (dr) pos[o + 1] = dr.at(pos[o], ds0 - pos[o + 2]) + (P[k3 + 1] - minY) * sy + dl;
         let nx = N[k3], ny = N[k3 + 1], nz = N[k3 + 2];
         if (uni) {
           nor[o] = r0 * nx + r1 * ny + r2 * nz; nor[o + 1] = r3 * nx + r4 * ny + r5 * nz; nor[o + 2] = r6 * nx + r7 * ny + r8 * nz;
@@ -355,7 +491,7 @@ export class Batch {
         fx[fo + i] = F[i] * fa;
         const m = F[i + 1];
         // rock/stone texture keys (6.x) and brain-groove keys (0.6..1.4) shift per instance
-        fx[fo + i + 1] = ko && m > 5.5 ? 6.05 + ((m - 6.05 + ko) % 0.9) : ko && m > 0.55 && m < 1.45 ? 0.6 + ((m - 0.6 + ko * 0.8) % 0.8) : m;
+        fx[fo + i + 1] = ko && m > 5.5 && m < 6.99 ? 6.05 + ((m - 6.05 + ko) % 0.9) : ko && m > 0.55 && m < 1.45 ? 0.6 + ((m - 0.6 + ko * 0.8) % 0.8) : m;
       }
       const I = t.idx;
       for (let i = 0; i < I.length; i++) idx[io + i] = I[i] + vo;
@@ -372,6 +508,7 @@ export class Batch {
     releaseAfterUpload(g);
     const m = new THREE.Mesh(g, this.mat);
     m.matrixAutoUpdate = false;
+    if (this.lod) m.userData.lod = this.lod;
     return m;
   }
 }
@@ -387,7 +524,10 @@ export function releaseAfterUpload(g) {
 
 // ---------- Instanced helper (shared template geometry, per-chunk instance buffers) ----------
 export class Inst {
-  constructor(tpl, material, max) { this.tpl = tpl; this.mat = material; this.max = max; this.m = []; this.c = []; }
+  constructor(tpl, material, max, lod = null) {
+    this.tpl = tpl; this.mat = material; this.max = max; this.m = []; this.c = []; this.lod = lod;
+    this.items = typeof window !== 'undefined' && (window.__propsAudit || window.__propsGapCheck) ? [] : null; // debug: contact audit
+  }
   get count() { return this.m.length / 16; }
   get tris() { return this.count * this.tpl.tris; }
   add(x, y, z, R, sx, sy = sx, sz = sx, r = 1, g = 1, b = 1) {
@@ -395,6 +535,7 @@ export class Inst {
     // column-major 4x4 for InstancedMesh
     this.m.push(R[0] * sx, R[3] * sx, R[6] * sx, 0, R[1] * sy, R[4] * sy, R[7] * sy, 0, R[2] * sz, R[5] * sz, R[8] * sz, 0, x, y, z, 1);
     this.c.push(r, g, b);
+    if (this.items) this.items.push({ tpl: this.tpl, x, y, z, R, sx, sy, sz, g: 1 });
     return true;
   }
   build() {
@@ -406,19 +547,108 @@ export class Inst {
     im.computeBoundingSphere();
     im.boundingSphere.radius += 1;
     im.matrixAutoUpdate = false;
+    if (this.lod) im.userData.lod = this.lod;
     return im;
   }
 }
 
 // ---------- Floor sampler: reproduces the terrain mesh (1.5 m grid, same triangle split) ----------
 const DXG = 1.5, NZG = 43, DZG = CHUNK / (NZG - 1);
-const samplers = new WeakMap();
-export function floorSampler(ctx) {
-  let f = samplers.get(ctx.group);
-  if (!f) { f = new FloorSampler(ctx); samplers.set(ctx.group, f); }
-  return f;
+const grounds = new WeakMap();
+// Per-chunk ground: floor mesh + every registered support prop (rocks, mounds, steps, arches...).
+// Same API as before (at(x, s) + nx/ny/nz), so existing callers now land on supports too.
+export function floorSampler(ctx) { return groundOf(ctx); }
+export function groundOf(ctx) {
+  let g = grounds.get(ctx.group);
+  if (!g) { g = new Ground(ctx); grounds.set(ctx.group, g); }
+  return g;
 }
-class FloorSampler {
+const hkey = (i, j) => (Math.imul(i, 73856093) ^ Math.imul(j, 19349663)) | 0;
+export class Ground {
+  constructor(ctx) {
+    this.ctx = ctx; this.fs = new FloorSampler(ctx); this.s0 = ctx.s0;
+    this.hash = new Map(); this.list = []; this.occ = new Set();
+    this.nx = 0; this.ny = 1; this.nz = 0;
+  }
+  // floor mesh only
+  floor(x, s) { const h = this.fs.at(x, s); this.nx = this.fs.nx; this.ny = this.fs.ny; this.nz = this.fs.nz; return h; }
+  // top-most surface at (x, s): floor or any support prop (optionally ignoring one item)
+  at(x, s, exclude = null) {
+    let h = this.floor(x, s);
+    const cell = this.hash.get(hkey(Math.floor(x / 4), Math.floor(s / 4)));
+    if (!cell) return h;
+    let best = null;
+    for (let i = 0; i < cell.length; i++) {
+      const sp = cell[i];
+      if (sp.it === exclude) continue;
+      const dx = x - sp.x, ds = s - sp.s;
+      if (dx * dx + ds * ds > sp.r2) continue;
+      const y = this.supH(sp, x, s);
+      if (y > h) { h = y; best = sp; }
+    }
+    if (best) {
+      const e = 0.15, a = this.supH(best, x - e, s), b = this.supH(best, x + e, s), c = this.supH(best, x, s - e), d = this.supH(best, x, s + e);
+      if (a > -1e8 && b > -1e8 && c > -1e8 && d > -1e8) {
+        const gx = (b - a) / (2 * e), gs = (d - c) / (2 * e), l = Math.sqrt(gx * gx + 1 + gs * gs);
+        this.nx = -gx / l; this.ny = 1 / l; this.nz = gs / l;
+      } else { this.nx = 0; this.ny = 1; this.nz = 0; }
+    }
+    return h;
+  }
+  // height only (no normal): the fast path for contact-band seating and the audit
+  h(x, s, exclude = null) {
+    let h = this.fs.at(x, s);
+    const cell = this.hash.get(hkey(Math.floor(x / 4), Math.floor(s / 4)));
+    if (!cell) return h;
+    for (let i = 0; i < cell.length; i++) {
+      const sp = cell[i];
+      if (sp.it === exclude) continue;
+      const dx = x - sp.x, ds = s - sp.s;
+      if (dx * dx + ds * ds > sp.r2) continue;
+      const y = this.supH(sp, x, s);
+      if (y > h) h = y;
+    }
+    return h;
+  }
+  // is (x, s) on top of a support (rather than the bare floor)?
+  onSupport(x, s, tol = 0.02) { const f = this.fs.at(x, s); return this.at(x, s) > f + tol; }
+  supH(sp, x, s) {
+    const dx = x - sp.x, dz = -(s - sp.s);
+    const ly = sp.tpl.rayDown((sp.c * dx - sp.sn * dz) / sp.sx, (sp.sn * dx + sp.c * dz) / sp.sz);
+    return ly === -Infinity ? -1e9 : sp.y + ly * sp.sy;
+  }
+  // register a placed batch item (yaw-only rotation) as something others can rest on
+  addSupport(it, s) {
+    const R = it.R;
+    if (Math.abs(R[4] - 1) > 1e-4) return null;
+    const rad = it.tpl.r * Math.max(it.sx, it.sz) + 0.2;
+    const sp = { it, tpl: it.tpl, x: it.x, y: it.y, s, c: R[0], sn: R[2], sx: it.sx, sy: it.sy, sz: it.sz, r2: rad * rad };
+    for (let i = Math.floor((sp.x - rad) / 4); i <= Math.floor((sp.x + rad) / 4); i++) {
+      for (let j = Math.floor((s - rad) / 4); j <= Math.floor((s + rad) / 4); j++) {
+        const k = hkey(i, j); let a = this.hash.get(k);
+        if (!a) this.hash.set(k, (a = []));
+        a.push(sp);
+      }
+    }
+    this.list.push(sp);
+    return sp;
+  }
+  // footprint occupancy (1 m cells, per layer) so big props do not interpenetrate
+  free(x, s, r, layer = 0) {
+    for (let i = Math.floor(x - r); i <= Math.floor(x + r); i++) for (let j = Math.floor(s - r); j <= Math.floor(s + r); j++) {
+      const cx = i + 0.5 - x, cs = j + 0.5 - s;
+      if (cx * cx + cs * cs <= (r + 0.35) * (r + 0.35) && this.occ.has(hkey(i, j) ^ (layer * 1640531527))) return false;
+    }
+    return true;
+  }
+  occupy(x, s, r, layer = 0) {
+    for (let i = Math.floor(x - r); i <= Math.floor(x + r); i++) for (let j = Math.floor(s - r); j <= Math.floor(s + r); j++) {
+      const cx = i + 0.5 - x, cs = j + 0.5 - s;
+      if (cx * cx + cs * cs <= (r + 0.35) * (r + 0.35)) this.occ.add(hkey(i, j) ^ (layer * 1640531527));
+    }
+  }
+}
+export class FloorSampler {
   constructor(ctx) {
     this.ctx = ctx; this.s0 = ctx.s0;
     this.k0 = Math.round(ctx.xMin / DXG);
@@ -461,12 +691,26 @@ export function tubeClear(ctx, x, s, yLo, yHi, r = 0, margin = 0.35, tube = TUBE
   }
   return true;
 }
+// 1 m table of the path around the chunk (built on first use), linear in between
+function pathTab(ctx) {
+  let P = ctx._pathTab;
+  if (!P) {
+    const a = ctx.s0 - 80, n = Math.ceil(ctx.s1 - ctx.s0) + 162, X = new Float32Array(n), Y = new Float32Array(n);
+    for (let i = 0; i < n; i++) { X[i] = ctx.pathX(a + i); Y[i] = ctx.pathY(a + i); }
+    P = ctx._pathTab = { a, n, X, Y };
+  }
+  return P;
+}
 // flat array of global [x, y, s] points
 export function pointsClear(ctx, pts, margin = 0.5) {
-  const lim = TUBE + margin;
+  const lim = (TUBE + margin) * (TUBE + margin), P = pathTab(ctx), X = P.X, Y = P.Y;
   for (let i = 0; i < pts.length; i += 3) {
-    const s = pts[i + 2], dx = pts[i] - ctx.pathX(s), dy = pts[i + 1] - ctx.pathY(s);
-    if (dx * dx + dy * dy < lim * lim) return false;
+    const s = pts[i + 2], u = s - P.a;
+    let px, py;
+    if (u >= 0 && u < P.n - 1) { const k = u | 0, f = u - k; px = X[k] + (X[k + 1] - X[k]) * f; py = Y[k] + (Y[k + 1] - Y[k]) * f; }
+    else { px = ctx.pathX(s); py = ctx.pathY(s); }
+    const dx = pts[i] - px, dy = pts[i + 1] - py;
+    if (dx * dx + dy * dy < lim) return false;
   }
   return true;
 }
@@ -487,47 +731,85 @@ export function presence(ctx, key) {
   return w;
 }
 
-// Staged populators: stage 0 runs layout(ctx) -> parts (Batches / builder fns) and caches it per chunk;
-// stages 1..n each merge one slice of every batch (keeps each call within the frame budget).
-const VERTS_PER_STAGE = 15000;
-export function staged(layout, nBuild = 12) {
+// Staged populators: stage 0 runs layout(ctx) -> { batches, extra, more } and caches it per chunk.
+// `more` (optional) is a list of continuation functions that keep filling the same batches, one per
+// later stage, so heavy layouts stay within the frame budget. Once they are done, the merge work is
+// packed into jobs of <= VERTS_PER_STAGE vertices, one job per stage. The last stage flushes the rest.
+const VERTS_PER_STAGE = 10000;
+const morton = (i, j) => { let k = 0; for (let b = 0; b < 4; b++) k |= ((i >> b) & 1) << (2 * b) | ((j >> b) & 1) << (2 * b + 1); return k; };
+export function staged(layout, nBuild = 32) {
   const cache = new WeakMap();
-  const pops = [(ctx) => {
-    const L = layout(ctx);
-    if (!L) return null;
-    // pack merge work into jobs of <= VERTS_PER_STAGE vertices, one job per later stage
+  const plan = (ctx, L) => {
     L.jobs = [];
     for (const b of L.batches) {
       if (!b || !b.items.length) continue;
+      // spatially coherent slices: items in Z-order over 16 m tiles, so each merged slice is a compact
+      // patch with a tight bounding sphere and frustum culling drops the parts behind or beside the camera
+      if (b.vc > VERTS_PER_STAGE) {
+        const px = ctx.pathX(ctx.s0 + 32);
+        for (const it of b.items) it._k = morton(Math.max(0, Math.min(15, Math.floor(-it.z / 16))), Math.max(0, Math.min(15, Math.floor((it.x - px) / 16 + 8))));
+        b.items.sort((p, q) => p._k - q._k);
+      }
       const n = Math.max(1, Math.ceil(b.vc / VERTS_PER_STAGE));
       for (let k = 0; k < n; k++) L.jobs.push([b, k, n]);
     }
+    L.next = 0;
+    register(ctx, L.batches, L.extra);
+    // meshes built directly during layout (shafts, plumes, instanced grass...) go out with this stage
+    return L.extra && L.extra.length ? L.extra : [];
+  };
+  const pops = [(ctx) => {
+    const L = layout(ctx);
+    if (!L) return null;
+    L.more = L.more || [];
     cache.set(ctx.group, L);
-    register(ctx, L.batches);
-    // meshes built directly during layout (shafts, plumes...) are returned here
-    return L.extra && L.extra.length ? finish(L.extra) : null;
+    if (L.more.length) return null;
+    const ex = plan(ctx, L);
+    return ex.length ? finish(ex, ctx.tier) : null;
   }];
   for (let k = 0; k < nBuild; k++) {
+    const last = k === nBuild - 1;
     pops.push((ctx) => {
       const L = cache.get(ctx.group);
-      if (!L || k >= L.jobs.length) return null;
-      const jobs = k === nBuild - 1 ? L.jobs.slice(k) : [L.jobs[k]];
-      if (k === nBuild - 1 || k === L.jobs.length - 1) cache.delete(ctx.group);
-      return finish(jobs.map(([b, i, n]) => b.build(i, n)));
+      if (!L) return null;
+      let parts = [];
+      if (L.more.length) {
+        do L.more.shift()(); while (last && L.more.length);
+        if (L.more.length) return null;
+        parts = plan(ctx, L);
+        if (!last) { if (!L.jobs.length) cache.delete(ctx.group); return parts.length ? finish(parts, ctx.tier) : null; }
+      }
+      const jobs = last ? L.jobs.slice(L.next) : L.jobs.slice(L.next, L.next + 1);
+      L.next += jobs.length;
+      if (last || L.next >= L.jobs.length) cache.delete(ctx.group);
+      return finish(parts.concat(jobs.map(([b, i, n]) => b.build(i, n))), ctx.tier);
     });
   }
   return pops;
 }
 
 // Assemble populator output from batches / meshes
-export function finish(parts) {
+// Per-mesh LOD (same distances as the core's per-chunk LOD): each 'near' / 'mid' slice sits in a
+// THREE.LOD at its bounding-sphere centre, so a slice is hidden by its own distance, not its chunk's.
+const LOD_DIST = { high: { near: 70, mid: 150 }, low: { near: 45, mid: 100 } };
+export function finish(parts, tier = null) {
   const g = new THREE.Group();
   g.matrixAutoUpdate = false;
-  const meshes = [];
+  const meshes = [], D = tier ? LOD_DIST[tier === 'low' ? 'low' : 'high'] : null;
   for (const p of parts) {
     if (!p) continue;
     const m = p.build ? p.build() : p;
-    if (m) { g.add(m); meshes.push(m); }
+    if (!m) continue;
+    meshes.push(m);
+    const d = D && m.userData.lod && D[m.userData.lod];
+    const bs = d && (m.isInstancedMesh ? m.boundingSphere : m.geometry.boundingSphere);
+    if (bs) {
+      const lod = new THREE.LOD();
+      lod.position.copy(bs.center); lod.updateMatrix(); lod.matrixAutoUpdate = false;
+      m.position.copy(bs.center).negate(); m.updateMatrix();
+      lod.addLevel(m, 0); lod.addLevel(new THREE.Object3D(), d);
+      g.add(lod);
+    } else g.add(m);
   }
   if (!meshes.length) return null;
   return {
@@ -571,7 +853,7 @@ export function propClear(ctx, x, s, yLo, yHi, r, soft) {
 export const ENV = { shape: null };
 // Bend apexes inside the chunk: obstacles placed at side * d appear dead ahead on approach
 // (outside of the bend) and the camera curves around them.
-export function bendSpots(ctx, thr = 0.0045, step = 2) {
+export function bendSpots(ctx, thr = 0.012, step = 2) { // apexes ~35 m apart; layouts thin them further
   const sh = ENV.shape, out = [];
   if (!sh || !sh.pathCurv) return out;
   for (let s = Math.ceil(ctx.s0 / step) * step; s < ctx.s1; s += step) {
@@ -586,10 +868,14 @@ export function bendSpots(ctx, thr = 0.0045, step = 2) {
 export function named(t, name) { for (const x of Array.isArray(t) ? t : [t]) x.label = name; return t; }
 export function soft(t) { for (const x of Array.isArray(t) ? t : [t]) x.solid = false; return t; }
 const MAX_OBS = 400, MAX_LABELS = 150;
-function register(ctx, batches) {
-  if (typeof window !== 'undefined' && window.__propsGapCheck) { // debug: keep ground items for gap measurement
-    const L = window.__propsItems || (window.__propsItems = []);
-    for (const b of batches) if (b && b.items) for (const it of b.items) if (it.g) L.push({ it, s0: ctx.s0, group: ctx.group });
+function register(ctx, batches, extra = null) {
+  if (typeof window !== 'undefined' && (window.__propsAudit || window.__propsGapCheck)) { // debug: ground/ceiling contact audit
+    const L = window.__propsItems || (window.__propsItems = []), gnd = groundOf(ctx);
+    for (const b of extra ? [...batches, ...extra] : batches) if (b && b.items) for (const it of b.items) {
+      it._sw = !!(b.mat && b.mat.side === THREE.DoubleSide); // soft / swaying (clearance check uses the lens radius)
+      if (it.g) L.push({ it, s0: ctx.s0, group: ctx.group, gnd, ctx, mode: 'floor' });
+      if (it.hang) L.push({ it, s0: ctx.s0, group: ctx.group, gnd, ctx, mode: 'ceil' });
+    }
   }
   if (!ctx.addObstacle && !ctx.addLabel) return;
   const obs = [], labels = [];
@@ -606,7 +892,7 @@ function register(ctx, batches) {
       const name = it.lbl || t.label;
       if (name && size > 0.12) {
         const c = tf((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2);
-        labels.push([it.lbl ? size * 3 : size, name, c]);
+        labels.push([it.lbl ? size * 3 : size, name, c, it.fact || t.fact]);
       }
       if (swayMat || !t.solid || size < 0.4) continue;
       for (const o of t.obstacles()) {
@@ -625,7 +911,7 @@ function register(ctx, batches) {
   if (ctx.addLabel) {
     labels.sort((p, q) => q[0] - p[0]);
     const nL = Math.max(0, Math.min(MAX_LABELS - (ctx._lblCount || 0), labels.length));
-    for (let i = 0; i < nL; i++) { const [, n, c] = labels[i]; ctx.addLabel(n, c[0], c[1], c[2]); }
+    for (let i = 0; i < nL; i++) { const [, n, c, f] = labels[i]; ctx.addLabel(n, c[0], c[1], c[2], f || undefined); }
   }
   ctx._obsCount = Math.min(MAX_OBS, (ctx._obsCount || 0) + obs.length);
   ctx._lblCount = Math.min(MAX_LABELS, (ctx._lblCount || 0) + labels.length);
@@ -654,7 +940,7 @@ export function variants(tpl, n, seed, { disp = 0.08, freq = 1.6, scale = 0.22, 
     }
     if (smooth) b.smooth(0, 0);
     b.obs = tpl.obs ? tpl.obs.map((o) => o.slice()) : null;
-    b.label = tpl.label; b.solid = tpl.solid;
+    b.label = tpl.label; b.solid = tpl.solid; b.fact = tpl.fact; b.support = tpl.support; b.drape = tpl.drape;
     const v = b.build();
     v.vents = tpl.vents;
     out.push(v);
@@ -663,3 +949,61 @@ export function variants(tpl, n, seed, { disp = 0.08, freq = 1.6, scale = 0.22, 
 }
 // expand every template in a list into n variants each
 export const vary = (list, n, seed, opts) => list.flatMap((t, i) => variants(t, n, seed + i * 101, opts));
+
+
+// ---------- quality tier ----------
+// near/mid densities scale down on low-tier GPUs
+export const tierK = (ctx) => (ctx.tier === 'low' ? 0.6 : 1);
+// guarded point-of-interest registration (creatures gather, the camera director looks)
+export function poi(ctx, type, x, y, s, r = 5, data = null) { if (ctx.addPOI) ctx.addPOI(type, x, y, s, r, data); }
+
+// ---------- contact audit (debug): gap between an item's contact band and what it rests on ----------
+// Returns the worst gap (m) over a 3x3 grid of the contact band; <= 0 means embedded / touching.
+export function auditGap(rec) {
+  const it = rec.it, t = it.tpl, R = it.R, P = t.pos, ceil = rec.mode === 'ceil';
+  // draped patches conform vertex by vertex: only their base vertices are contact points
+  const lim = ceil ? t.maxY - t.band : t.minY + (it.drape ? 0.004 : t.band);
+  const pts = [];
+  let xa = 1e9, xb = -1e9, sa = 1e9, sb = -1e9;
+  if (!ceil && R[4] < 0.5) { // lying / capsized: contact band in world orientation (as groundY seats it)
+    const F = t.tiltFoot(R, it.sx, it.sy, it.sz, 1e9);
+    for (let i = 0; i < F.length; i += 3) {
+      const wx = F[i] + it.x, wy = F[i + 1] + it.y, ws = rec.s0 - (F[i + 2] + it.z);
+      pts.push(wx, wy, ws);
+      xa = Math.min(xa, wx); xb = Math.max(xb, wx); sa = Math.min(sa, ws); sb = Math.max(sb, ws);
+    }
+  } else for (let i = 0; i < P.length; i += 3) {
+    const ly = P[i + 1];
+    if (ceil ? ly < lim : ly > lim) continue;
+    const px = P[i] * it.sx, py = ly * it.sy, pz = P[i + 2] * it.sz;
+    const wx = R[0] * px + R[1] * py + R[2] * pz + it.x, wz = R[6] * px + R[7] * py + R[8] * pz + it.z, ws = rec.s0 - wz;
+    let wy = R[3] * px + R[4] * py + R[5] * pz + it.y;
+    if (it.drape) wy = it.drape.at(wx, ws) + (ly - t.minY) * it.sy + t.dLift - 0.012;
+    pts.push(wx, wy, ws);
+    xa = Math.min(xa, wx); xb = Math.max(xb, wx); sa = Math.min(sa, ws); sb = Math.max(sb, ws);
+  }
+  const cell = new Map(), cx = (xb - xa) / 3 + 1e-6, cs = (sb - sa) / 3 + 1e-6;
+  if (!ceil && !it.drape && R[4] >= 0.5 && pts.length >= 24) { // flat-based items (8+ contact vertices)
+    // the item's real underside: sample its bottom surface in a 6x6 grid over the band's extent
+    // (a box's bottom face spans cells without putting a vertex in them)
+    for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) {
+      const wx = xa + (xb - xa) * (a + 0.5) / 6, ws = sa + (sb - sa) * (b + 0.5) / 6;
+      const dx = wx - it.x, dy = 0, dz = (rec.s0 - ws) - it.z; // to template space (R orthonormal)
+      const lx = (R[0] * dx + R[3] * dy + R[6] * dz) / it.sx, lz = (R[2] * dx + R[5] * dy + R[8] * dz) / it.sz;
+      const by = t.rayUp(lx, lz);
+      if (!(by <= t.minY + Math.min(t.band, 0.012 / it.sy))) continue; // only the flat bottom faces are contact faces
+      const px = lx * it.sx, py = by * it.sy, pz = lz * it.sz;
+      pts.push(R[0] * px + R[1] * py + R[2] * pz + it.x, R[3] * px + R[4] * py + R[5] * pz + it.y, rec.s0 - (R[6] * px + R[7] * py + R[8] * pz + it.z));
+    }
+  }
+  for (let i = 0; i < pts.length; i += 3) {
+    const wx = pts[i], wy = pts[i + 1], ws = pts[i + 2];
+    const g = ceil ? rec.ctx.ceilingAt(wx, ws) - wy : wy - rec.gnd.h(wx, ws, it);
+    const k = Math.min(2, Math.floor((wx - xa) / cx)) * 3 + Math.min(2, Math.floor((ws - sa) / cs));
+    const v = cell.get(k);
+    cell.set(k, v === undefined ? g : Math.min(v, g));
+  }
+  let gap = -1e9;
+  for (const v of cell.values()) gap = Math.max(gap, v);
+  return gap;
+}

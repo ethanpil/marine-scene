@@ -1,8 +1,8 @@
 // Seagrass meadow: thousands of swaying blades as two instanced patch LODs (near / far), sandy gaps
 // from noise, plus shells, sea cucumbers, scallops, sand dollars, cushion stars and rocks.
-import { Builder, Batch, Inst, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, vary } from './core.js';
+import { Builder, Batch, Inst, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, vary, tierK, LENS } from './core.js';
 import { grassPatch, seastar } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer, groundY } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -86,6 +86,7 @@ function specs() {
     grit: { tpl: T.grit, scale: [0.8, 1.6], follow: 1, sink: 0.01, tint: tintFrom([[1, 0.96, 0.9]], 0.06) },
     algae: { tpl: T.algae, scale: [0.6, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[0.7, 0.8, 0.5], [0.8, 0.7, 0.45]], 0.1) },
   });
+  S.bottle = { tpl: T.bottle, scale: [1, 1.15], follow: 0.9, sink: 0.5, tint: tintFrom([[1, 1, 1]], 0.08) };
   S.micro = [{ w: 2, spec: S.grit }, { w: 1.5, spec: S.algae }];
   S.list = [
     { w: 2, k: 'rock' }, { w: 1.2, k: 'conch' }, { w: 1.6, k: 'cucumber' }, { w: 1.2, k: 'scallop' }, { w: 1.4, k: 'dollar' }, { w: 1.1, k: 'cushion' },
@@ -94,64 +95,94 @@ function specs() {
 }
 
 const meadow = (x, s) => noise2(x / 13, s / 13, 501) * 0.7 + noise2(x / 4.5, s / 4.5, 502) * 0.3;
+// meandering bare-sand channels (current-scoured) for the channelled community
+const channel = (x, s) => 1 - sstep(0.04, 0.16, Math.abs(noise2(x / 24 + 1.6 * noise2(s / 70, 3.1, 504), s / 90, 503)));
 
-// grass patches on a jittered grid within [d0, d1] of the path
-function grassField(ctx, fs, insts, rng, d0, d1, step, hgt, minRest) {
-  for (let s = ctx.s0 + step * 0.5; s < ctx.s1; s += step) {
+// ---------- per-segment communities: dominant species, density, sand pattern ----------
+const COMMUNITIES = [
+  { name: 'turtle grass meadow', near: () => T.turtleNear, far: () => T.turtleFar, gap: -0.36, dens: 1.1,
+    label: 'Turtle grass', fact: 'Green sea turtles graze these meadows, cropping the blades short like a lawn.' },
+  { name: 'eelgrass meadow', near: () => T.eelNear, far: () => T.eelFar, gap: -0.3, dens: 0.95,
+    label: 'Eelgrass', fact: 'Eelgrass is a flowering plant, not a seaweed: it even pollinates underwater.' },
+  { name: 'seagrass with sand channels', near: () => [T.grassNear[0], T.grassNear[1], T.eelNear[0]], far: () => [T.grassFar[0], T.eelFar[0]], gap: -0.26, dens: 1.0, channels: true,
+    label: 'Seagrass', fact: 'Seagrasses descend from land plants that returned to the sea some 70-100 million years ago.' },
+];
+function community(ctx) {
+  const seg = ctx.segments.find((g) => g.key === 'seagrass');
+  return seg ? COMMUNITIES[Math.floor(mulberry32(seg.seed ^ 0x5ea9)() * COMMUNITIES.length)] : COMMUNITIES[0];
+}
+
+// grass patches on a jittered grid within [d0, d1] of the path; every blade base is seated on the floor
+function grassField(ctx, fs, insts, rng, d0, d1, step, comm, sA = ctx.s0, sB = ctx.s1) {
+  const k = comm.dens * tierK(ctx);
+  for (let s = sA + step * 0.5; s < sB; s += step) {
     const w = ctx.weightOf(s, 'seagrass');
     if (w <= 0) continue;
     const px = ctx.pathX(s), py = ctx.pathY(s);
     for (let side = -1; side <= 1; side += 2) {
       for (let d = d0; d < d1; d += step) {
-        if (rng() > w) continue;
+        if (rng() > w * k) continue;
         const ss = s + (rng() - 0.5) * step, x = px + side * (d + rng() * step);
-        const m = meadow(x, ss);
-        if (m < -0.26) continue; // sand patch
-        const dens = sstep(-0.26, -0.06, m);
+        const m = meadow(x, ss) - (comm.channels ? 0.6 * channel(x, ss) : 0);
+        if (m < comm.gap) continue; // sand patch
+        const dens = sstep(comm.gap, comm.gap + 0.2, m);
         if (rng() > dens) continue;
-        const y = fs.at(x, ss);
-        // keep clear of the flight tube: patch height ~hgt
-        const dx = Math.abs(x - px) - 0.6, dy = py - (y + hgt);
-        if (dx < 0 && dy < 0.75) continue; // keep the lens radius clear (only matters in shallow cross-fades)
-        const sc = (0.7 + 0.5 * dens) * (0.85 + rng() * 0.3);
-        const R = orient(fs.nx, fs.ny, fs.nz, 0.8, rng() * TAU);
+        const ins = insts[(rng() * insts.length) | 0], tpl = ins.tpl;
+        const y0 = fs.at(x, ss);
+        const sc = (0.7 + 0.5 * dens) * (0.85 + rng() * 0.3), sy = sc * (0.8 + rng() * 0.5);
+        // soft: only the lens radius around the camera line stays clear
+        const dx = Math.abs(x - px) - tpl.r * sc, dy = py - (y0 + tpl.maxY * sy);
+        if (dx < LENS && dy < LENS) continue;
+        const steep = fs.ny < 0.93, R = orient(fs.nx, fs.ny, fs.nz, 0.8, rng() * TAU);
         const g = 0.85 + rng() * 0.3, yel = rng() * 0.15;
-        insts[(rng() * insts.length) | 0].add(x, y - 0.03, -(ss - ctx.s0), R, sc, sc * (0.8 + rng() * 0.5), sc, g * (1 + yel), g * (1 + yel * 0.4), g * (1 - yel * 0.5));
+        ins.add(x, groundY(fs, x, ss, tpl, R, sc, sy, sc, !steep) - 0.025, -(ss - ctx.s0), R, sc, sy, sc, g * (1 + yel), g * (1 + yel * 0.4), g * (1 - yel * 0.5));
       }
     }
   }
-  return minRest;
 }
 
 export function layoutGrassNear(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
-  const fs = floorSampler(ctx), rng = ctx.rng;
-  const insts = T.grassNear.map((t) => new Inst(t, MAT.sway, Math.round(560 * budgetK(ctx, 'seagrass'))));
-  grassField(ctx, fs, insts, rng, 0, 14, 1.0, 0.75);
-  if (ctx.addLabel) for (let k = 0; k < 6; k++) { const s = ctx.s0 + rng() * 64, x = ctx.pathX(s) + (rng() - 0.5) * 16; ctx.addLabel('Turtle grass', x, fs.at(x, s) + 0.35, s); }
-  return { extra: insts, batches: [] };
+  const fs = floorSampler(ctx), rng = ctx.rng, comm = community(ctx);
+  // one instanced set per half chunk: each half gets its own bounding sphere, so LOD and culling are finer
+  const mk = () => comm.near().map((t) => new Inst(t, MAT.sway, Math.round(280 * budgetK(ctx, 'seagrass')), 'near'));
+  const A = mk(), B = mk();
+  if (ctx.addLabel) for (let k = 0; k < 6; k++) { const s = ctx.s0 + rng() * 64, x = ctx.pathX(s) + (rng() - 0.5) * 16; ctx.addLabel(comm.label, x, fs.at(x, s) + 0.35, s, comm.fact); }
+  const h = ctx.s0 + 32;
+  const q = (I, a, b) => () => grassField(ctx, fs, I, rng, 0, 14, 1.0, comm, a, b);
+  return { extra: [...A, ...B], batches: [], more: [q(A, ctx.s0, ctx.s0 + 16), q(A, ctx.s0 + 16, h), q(B, h, ctx.s0 + 48), q(B, ctx.s0 + 48, ctx.s1)] };
 }
 export function layoutGrassFar(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
-  const fs = floorSampler(ctx), rng = ctx.rng;
-  const insts = T.grassFar.map((t) => new Inst(t, MAT.sway, Math.round(320 * budgetK(ctx, 'seagrass'))));
-  grassField(ctx, fs, insts, rng, 14, 40, 1.8, 0.8);
-  return { extra: insts, batches: [] };
+  const fs = floorSampler(ctx), rng = ctx.rng, comm = community(ctx);
+  const insts = comm.far().map((t) => new Inst(t, MAT.sway, Math.round(320 * budgetK(ctx, 'seagrass')), 'mid'));
+  const h = ctx.s0 + 32.4;
+  const q = (a, b) => () => grassField(ctx, fs, insts, rng, 14, 40, 1.8, comm, a, b);
+  return { extra: insts, batches: [], more: [q(ctx.s0, ctx.s0 + 16.2), q(ctx.s0 + 16.2, h), q(h, ctx.s0 + 48.6), q(ctx.s0 + 48.6, ctx.s1)] };
 }
 export function layoutSeagrassMisc(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
-  const sp = specs(), fs = floorSampler(ctx), rng = ctx.rng;
-  const st = new Batch(MAT.static, 22000 * budgetK(ctx, 'seagrass'));
+  const sp = specs(), fs = floorSampler(ctx), rng = ctx.rng, tk = tierK(ctx), bk = budgetK(ctx, 'seagrass');
+  const st = new Batch(MAT.static, 8000 * bk), mid = new Batch(MAT.static, 10000 * bk * tk, 'mid'), near = new Batch(MAT.static, 12000 * bk * tk, 'near');
   for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'seagrass') * 0.7) putBend(ctx, fs, st, sp.bendRock, b, rng);
-  microDetail(ctx, fs, st, rng, 'seagrass', sp.micro, 70, 26);
   const nextP148 = clusterer(ctx, rng, 0, 30, 1.2);
-  for (let k = 0; k < 110; k++) {
-    const p = nextP148();
-    if (!p) continue;
-    if (rng() > ctx.weightOf(p.s, 'seagrass')) continue;
-    const e = pickW(rng, sp.list);
-    putFloor(ctx, fs, st, sp[e.k], p.x, p.s, rng);
+  const life = () => {
+    for (let k = 0; k < 55 * tk; k++) {
+      const p = nextP148();
+      if (!p) continue;
+      if (rng() > ctx.weightOf(p.s, 'seagrass')) continue;
+      const e = pickW(rng, sp.list);
+      putFloor(ctx, fs, e.k === 'rock' ? mid : near, sp[e.k], p.x, p.s, rng);
+    }
+  };
+  const more = [() => microDetail(ctx, fs, near, rng, 'seagrass', sp.micro, 70, 26), life, life];
+  // rare delight: a message in a bottle, half buried in a sandy gap
+  if (rng() < 0.06) {
+    for (let t = 0; t < 12; t++) {
+      const p = spot(ctx, rng, 2.5, 12, 1.4);
+      if (meadow(p.x, p.s) > -0.3) continue;
+      if (putFloor(ctx, fs, st, sp.bottle, p.x, p.s, rng)) break;
+    }
   }
-  st.split = 1;
-  return { batches: [st] };
+  return { batches: [st, mid, near], more };
 }

@@ -3,9 +3,14 @@
 // Vertex attribute aFx (vec2) drives per-vertex behaviour:
 //   static material  : x = amount (growth / glow / ice translucency), y = mode
 //                      mode 0 generic (+encrusting growth), 1 brain-coral meanders, 2 polyp texture,
-//                      3 hot mineral glow (vents), 4 rusty steel streaks, 5 ice
+//                      3 hot mineral glow (vents), 4 rusty steel streaks, 5 ice, 6.x rock/stone (texture key),
+//                      7 gold (metallic, glints in caustics), 8 giant clam (x>0: mantle sinks, x<0: valve lips
+//                      close inward, as the camera comes within ~4 m)
+//   all hard props get weathering: sediment dusting on up-facing faces, darker wet crevices
 //   sway material    : x = sway amplitude in metres at this vertex, y = style
-//                      style 0 gentle (corals, fans), 1 kelp surge, 2 grass waves, 3 tentacle wiggle
+//                      style 0 gentle (corals, fans), 1 kelp surge, 2 grass waves, 3 tentacle wiggle,
+//                      4 gorgonian lattice, 5 retracts when the camera is near (x = retract depth),
+//                      6 gentle + soft bioluminescence at night (sea pens)
 import * as THREE from 'three';
 import { applyWater } from '../water.js';
 
@@ -25,8 +30,12 @@ vec3 pSway(vec3 wq, vec2 fx) {
   float t = uTime;
   float ph = dot(wq.xz, vec2(0.2454369, 0.1963495));
   vec3 o;
-  if (fx.y < 0.5 || fx.y > 3.5) {
+  if (fx.y < 0.5 || (fx.y > 3.5 && fx.y < 4.5) || fx.y > 5.5) {
     o = vec3(sin(t * 0.8 + ph), 0.0, 0.6 * sin(t * 0.63 + ph * 1.3 + 1.0));
+  } else if (fx.y > 4.5) {
+    // tube worms / christmas-tree worms: whip back into their tubes as the camera passes close
+    float c = 1.0 - smoothstep(2.6, 4.6, distance(wq, cameraPosition));
+    o = vec3(sin(t * 1.1 + ph) * 0.05, -c, cos(t * 0.9 + ph) * 0.05);
   } else if (fx.y < 1.5) {
     float surge = sin(t * 0.31 + wq.z * 0.0490874);
     o = vec3(0.65 * surge + 0.35 * sin(t * 0.83 + ph), 0.0, 0.55 * sin(t * 0.41 + ph * 0.7 + 2.0));
@@ -97,13 +106,13 @@ if (pMode > 0.5 && pMode < 1.5) {
   diffuseColor.rgb *= 1.0 - 0.5 * groove;
   pH = -groove * 0.8 + pB.g * 0.2;
   pBumpK = 0.05;
-} else if (pMode > 1.5 && pMode < 2.5) {
-  // massive coral polyps / rough sponge pores
+} else if ((pMode > 1.5 && pMode < 2.5) || (pMode > 7.5 && pMode < 8.5)) {
+  // massive coral polyps / rough sponge pores / clam mantle spots: two scales of rugosity
   vec4 pC = pTri(vWPos, pW, 0.5);
   float d = smoothstep(0.42, 0.68, pC.a);
-  diffuseColor.rgb *= 0.82 + 0.32 * d;
-  pH = d * 0.6 + pA.r * 0.4;
-  pBumpK = 0.03;
+  diffuseColor.rgb *= 0.8 + 0.34 * d;
+  pH = d * 0.6 + pA.r * 0.3 + pB.a * 0.3;
+  pBumpK = 0.045;
 } else if (pMode > 3.5 && pMode < 4.5) {
   // rusty steel: vertical rust streaks + scaling
   float st = texture2D(uNoiseTex, vec2((vWPos.x + vWPos.z) * 0.5, vWPos.y / 16.0)).r;
@@ -114,7 +123,12 @@ if (pMode > 0.5 && pMode < 1.5) {
 } else if (pMode > 4.5 && pMode < 5.5) {
   diffuseColor.rgb *= 0.9 + 0.2 * pB.g;
   pBumpK = 0.05;
-} else if (pMode > 5.5) {
+} else if (pMode > 6.5 && pMode < 7.5) {
+  // gold: smooth metal
+  diffuseColor.rgb *= 0.92 + 0.16 * pB.g;
+  pH = pB.r * 0.3;
+  pBumpK = 0.006;
+} else if (pMode > 5.5 && pMode < 6.5) {
   // rock / dressed stone: per-template texture key picks scale, offset and channel mix
   float rk = fract(pMode);
   float P = rk < 0.33 ? 2.0 : (rk < 0.66 ? 4.0 : 8.0);
@@ -131,7 +145,7 @@ if (pMode > 0.5 && pMode < 1.5) {
   pH = n * 0.8 - crack * 0.7 + pB.g * 0.2;
   pBumpK = 0.055;
 }
-if (pMode < 2.5 || (pMode > 3.5 && pMode < 4.5) || pMode > 5.5) {
+if (pMode < 2.5 || (pMode > 3.5 && pMode < 4.5) || (pMode > 5.5 && pMode < 6.5)) {
   // encrusting growth (algae, coralline, sponges) on up-facing surfaces
   float g = vFx.x * smoothstep(-0.15, 0.6, pN.y + (pA.b - 0.5) * 0.9) * smoothstep(0.4, 0.62, pA.a * 0.75 + pB.b * 0.45);
   g = clamp(g, 0.0, 1.0);
@@ -139,6 +153,10 @@ if (pMode < 2.5 || (pMode > 3.5 && pMode < 4.5) || pMode > 5.5) {
   gc = mix(gc, vec3(0.78, 0.55, 0.2), smoothstep(0.66, 0.82, pA.b) * 0.8);
   diffuseColor.rgb = mix(diffuseColor.rgb, gc * (0.6 + 0.7 * pB.r), g);
   pH += g * pB.a;
+  // weathering shared by every hard prop: settled sediment on up-facing faces, darker wet crevices
+  float dust = smoothstep(0.55, 0.95, pN.y) * smoothstep(0.38, 0.8, pA.b * 0.7 + pB.r * 0.5) * (0.5 - 0.3 * g);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.64, 0.6, 0.52) * (0.85 + 0.3 * pB.g), dust);
+  diffuseColor.rgb *= mix(0.68, 1.0, smoothstep(0.08, 0.5, pH));
 }
 `;
 
@@ -149,7 +167,13 @@ normal = pBump(-vViewPosition, normal, vec2(dFdx(pH), dFdy(pH)) * pBumpK, faceDi
 
 const EMISSIVE_STATIC = /* glsl */`
 #include <emissivemap_fragment>
-if (pMode > 2.5 && pMode < 3.5) {
+if (pMode > 6.5 && pMode < 7.5) {
+  // gold glints where caustics dance across it
+  float dB = max(0.0, uSurfaceY - vWPos.y);
+  vec3 ca = causticRGB(vWPos);
+  float spark = pow(clamp(ca.g * 1.25 - 0.3, 0.0, 1.0), 2.0) * (0.55 + 0.45 * sin(uTime * 6.0 + pB.r * 40.0));
+  totalEmissiveRadiance += diffuseColor.rgb * (0.1 + 2.6 * spark * uCausticStr) * uSunScatter * exp(-uLightSigma * dB * 0.6);
+} else if (pMode > 2.5 && pMode < 3.5) {
   float fl = 0.78 + 0.22 * sin(uTime * 2.1 + vWPos.y * 2.7 + pA.r * 9.0);
   totalEmissiveRadiance += vec3(1.0, 0.22, 0.03) * vFx.x * fl * (0.35 + 1.2 * pB.r * pB.r) * 1.6;
 } else if (pMode > 4.5 && pMode < 5.5) {
@@ -162,12 +186,13 @@ const ROUGH_STATIC = /* glsl */`
 #include <roughnessmap_fragment>
 if (pMode > 4.5 && pMode < 5.5) roughnessFactor = 0.3;
 else if (pMode > 3.5 && pMode < 4.5) roughnessFactor = 0.7;
+else if (pMode > 6.5 && pMode < 7.5) roughnessFactor = 0.26;
 `;
 
 // style 4: gorgonian fan sheet cut into a net with ridged noise
 const LATTICE = /* glsl */`
 pBumpK = 0.015;
-if (pMode > 3.5) {
+if (pMode > 3.5 && pMode < 4.5) {
   float net = pTri(vWPos, pW, 0.5).a * 0.65 + pTri(vWPos, pW, 0.25).a * 0.35;
   float thr = mix(0.6, 0.47, smoothstep(4.0, 22.0, length(vWPos - cameraPosition)));
   if (net < thr) discard;
@@ -184,6 +209,20 @@ const EMISSIVE_SWAY = /* glsl */`
   float dB = max(0.0, uSurfaceY - vWPos.y);
   float kelpK = (pMode > 0.5 && pMode < 1.5) ? 2.6 : 1.0;
   totalEmissiveRadiance += diffuseColor.rgb * uSunColor * uSunScatter * exp(-uLightSigma * dB * 0.8) * skyVis(vWPos) * (0.1 + 0.6 * tr) * kelpK;
+  // sea pens: soft green bioluminescent pulses at night
+  if (pMode > 5.5 && pMode < 6.5) totalEmissiveRadiance += vec3(0.22, 0.95, 0.72) * uNight * (0.4 + 0.35 * sin(uTime * 1.3 + dot(vWPos.xz, vec2(0.6135923, 0.4908739))));
+}
+`;
+
+// giant clams close as the camera approaches: mantle sinks, valve lips move in (merged meshes are in
+// world-aligned chunk space, so the horizontal normal points out of the valve)
+const CLAM_VERTEX = /* glsl */`
+#include <begin_vertex>
+if (aFx.y > 7.5 && aFx.y < 8.5 && aFx.x != 0.0) {
+  vec3 wq = (modelMatrix * vec4(transformed, 1.0)).xyz;
+  float c = 1.0 - smoothstep(2.6, 5.5, distance(wq, cameraPosition));
+  if (aFx.x > 0.0) transformed.y -= c * aFx.x;
+  else { vec2 hn = objectNormal.xz; float l = length(hn); if (l > 1e-3) transformed.xz -= hn / l * c * (-aFx.x); }
 }
 `;
 
@@ -199,6 +238,8 @@ function propMaterial(key, sway) {
     patch(sh) {
       sh.vertexShader = sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\nvFx = aFx;');
       if (sway) sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', SWAY_PROJECT);
+      else sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', CLAM_VERTEX);
+      if (!sway) sh.fragmentShader = sh.fragmentShader.replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nif (vFx.y > 6.5 && vFx.y < 7.5) metalnessFactor = 0.85;');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <color_fragment>', sway ? COLOR_COMMON + LATTICE : COLOR_STATIC)
         .replace('#include <normal_fragment_maps>', sway ? NORMAL_BUMP + 'if (pMode > 1.5 && pMode < 2.5) normal = normalize(vNormal);' : NORMAL_BUMP)
@@ -238,14 +279,15 @@ function shaftMaterial() {
 
 // Billboard particles: rising vent smoke (alpha) or glow halos (additive).
 // attributes: position = emitter, aCorner (vec2), aP = (phase, rate, rise height, size)
-function billboardMaterial(halo) {
+function billboardMaterial(halo, white = false) {
   const m = new THREE.MeshBasicMaterial({
     color: 0xffffff, transparent: true, depthWrite: false,
     blending: halo ? THREE.AdditiveBlending : THREE.NormalBlending, side: THREE.DoubleSide,
   });
   if (halo) m.defines = { HALO: 1 };
+  else if (white) m.defines = { WHITE: 1 };
   return applyWater(m, {
-    key: halo ? 'props-halo' : 'props-plume', additive: halo, noLight: true,
+    key: halo ? 'props-halo' : white ? 'props-plume-white' : 'props-plume', additive: halo, noLight: true,
     vertexHead: 'attribute vec2 aCorner; attribute vec4 aP; varying vec2 vC; varying float vT; varying float vPh; uniform float uTime;',
     fragmentHead: 'varying vec2 vC; varying float vT; varying float vPh;',
     patch(sh) {
@@ -282,8 +324,14 @@ function billboardMaterial(halo) {
             float life = smoothstep(0.0, 0.06, vT) * (1.0 - smoothstep(0.5, 1.0, vT));
             float camF = smoothstep(1.5, 6.0, length(vWPos - cameraPosition));
             diffuseColor.a = puff * life * camF * (0.4 + 0.35 * n.g);
-            vec3 smoke = mix(vec3(0.012, 0.011, 0.01), vec3(0.05, 0.045, 0.04), n.b);
-            smoke += vec3(1.0, 0.4, 0.1) * (1.0 - smoothstep(0.0, 0.1, vT)) * 0.5;
+            #ifdef WHITE
+              // white smoker: cooler fluid, milky barite / anhydrite / silica particles, no hot glow
+              diffuseColor.a *= 0.75;
+              vec3 smoke = mix(vec3(0.17, 0.18, 0.18), vec3(0.36, 0.37, 0.35), n.b);
+            #else
+              vec3 smoke = mix(vec3(0.012, 0.011, 0.01), vec3(0.05, 0.045, 0.04), n.b);
+              smoke += vec3(1.0, 0.4, 0.1) * (1.0 - smoothstep(0.0, 0.1, vT)) * 0.5;
+            #endif
             diffuseColor.rgb = smoke;
           #endif
         }`);
@@ -297,6 +345,7 @@ export function initMaterials() {
   MAT.sway = propMaterial('props-sway', true);
   MAT.shaft = shaftMaterial();
   MAT.plume = billboardMaterial(false);
+  MAT.plumeWhite = billboardMaterial(false, true);
   MAT.halo = billboardMaterial(true);
   return MAT;
 }

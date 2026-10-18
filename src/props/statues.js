@@ -1,6 +1,6 @@
 // Sunken statuary: connected figures (limbs are tubes that start inside the torso/pelvis, with sphere
 // joints at shoulders, elbows, hips and knees), in many styles, poses and damage states, plus fragments.
-import { Builder, TAU, vn3, sat, lerp, rotX, rotY, rotZ, mul3 } from './core.js';
+import { Builder, TAU, vn3, sat, sstep, lerp, rotX, rotY, rotZ, mul3 } from './core.js';
 import { stoneInto } from './shapes.js';
 import { mulberry32 } from '../noise.js';
 
@@ -20,7 +20,48 @@ function mk(seed) {
   };
   const block = (sx, sy, sz, R, x, y, z, p = 6) => { const v0 = b.vc; stoneInto(b, { sx, sy, sz, p, rough: 0.04, seed, detail: 2, col: STONE, growth: 0.8, mode: key }); b.xform(v0, R || [1, 0, 0, 0, 1, 0, 0, 0, 1], x, y, z); };
   const lathe = (prof, rad, nu = 14, nv = 8) => b.lathe(nu, nv, prof, rad, paint);
-  return { b, rng, limb, ball, block, lathe, paint, key };
+  // carved head facing +z: brow ridge, eye sockets, nose, lips, chin, ears and a hair cap
+  const face = (p, r, curls) => b.blob(3, (x, y, z, o) => {
+    let px = x * 0.88, py = y * 1.12, pz = z * 0.98, dark = 0;
+    if (z > 0) {
+      pz += 0.1 * z * sstep(0.12, 0.3, y) * sstep(0.5, 0.36, y);                                       // brow
+      const eye = Math.exp(-(((Math.abs(x) - 0.33) ** 2) + (y - 0.12) ** 2) / 0.012);
+      pz -= 0.09 * eye; dark += 0.35 * eye;                                                           // sockets
+      pz += 0.2 * Math.exp(-(x * x) / 0.01) * sstep(-0.32, 0.12, y) * sstep(0.2, 0.06, y);         // nose
+      const lip = Math.exp(-(x * x) / 0.05) * Math.exp(-((y + 0.42) ** 2) / 0.004);
+      pz += 0.03 * lip; dark += 0.25 * Math.exp(-(x * x) / 0.04) * Math.exp(-((y + 0.42) ** 2) / 0.0008);
+      pz += 0.08 * z * sstep(-0.55, -0.72, y) * sstep(-0.95, -0.78, y);                              // chin
+    }
+    px *= 1 + 0.1 * Math.exp(-(z * z) / 0.03) * sstep(-0.2, 0.05, y) * sstep(0.35, 0.15, y);       // ears
+    const hair = sstep(0.25, 0.55, y - 0.35 * z);                                                     // hair cap over the crown
+    const bump = hair * (curls ? 0.06 * Math.abs(Math.sin(x * 14) * Math.sin(y * 13) * Math.sin(z * 12)) + 0.04 : 0.03);
+    o[0] = p[0] + px * r * (1 + bump); o[1] = p[1] + py * r * (1 + bump); o[2] = p[2] + pz * r * (1 + bump);
+    const c = (0.82 + 0.22 * vn3(o[0] * 4, o[1] * 4, o[2] * 4, seed)) * (1 - dark);
+    o[3] = STONE[0] * c; o[4] = STONE[1] * c; o[5] = STONE[2] * c; o[6] = 0.8; o[7] = key;
+  });
+  // fresh break: a short jagged stump with lighter, unweathered stone at the fracture
+  const stump = (p, d, r, len) => {
+    const q = [p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len];
+    b.tube([p, q], [r, r * 0.95], 7, paint);
+    b.blob(1, (x, y, z, o) => {
+      const j = 0.55 + 0.6 * Math.abs(vn3(x * 3 + seed, y * 3, z * 3, seed + 7));
+      o[0] = q[0] + x * r * j; o[1] = q[1] + y * r * j; o[2] = q[2] + z * r * j;
+      o[3] = STONE[0] * 1.18; o[4] = STONE[1] * 1.18; o[5] = STONE[2] * 1.15; o[6] = 0.1; o[7] = key;
+    });
+  };
+  return { b, rng, limb, ball, block, lathe, paint, key, face, stump };
+}
+
+// weathering: erosion pits and chipped edges displaced inward along the normal, pits darkened
+function erode(b, seed, from = 0) {
+  for (let i = from; i < b.vc; i++) {
+    const x = b.P[i * 3], y = b.P[i * 3 + 1], z = b.P[i * 3 + 2];
+    const pit = sstep(0.62, 0.86, vn3(x * 7.3, y * 7.3, z * 7.3, seed + 21)), chip = sstep(0.68, 0.9, vn3(x * 2.2, y * 2.2, z * 2.2, seed + 33));
+    const d = -(0.022 * pit + 0.035 * chip);
+    b.P[i * 3] += b.N[i * 3] * d; b.P[i * 3 + 1] += b.N[i * 3 + 1] * d; b.P[i * 3 + 2] += b.N[i * 3 + 2] * d;
+    const k = 1 - 0.3 * pit + 0.08 * chip;
+    b.C[i * 3] *= k; b.C[i * 3 + 1] *= k; b.C[i * 3 + 2] *= k;
+  }
 }
 
 // normalise: lift so the lowest point is at y = 0 and centre in xz
@@ -45,11 +86,11 @@ function human(F, o) {
   if (!o.headless) {
     limb([neck, [0, neck[1] + 0.08 * s, neck[2]]], [0.06 * s, 0.06 * s]);
     if (o.blockHead) block(0.26 * s, 0.32 * s, 0.26 * s, null, 0, neck[1] + 0.22 * s, neck[2], 4);
-    else ball([0, neck[1] + 0.19 * s, neck[2] + 0.01 * s], 0.11 * s, 0.9, 1.15, 1.0);
-  }
+    else F.face([0, neck[1] + 0.19 * s, neck[2] + 0.01 * s], 0.115 * s, o.curls);
+  } else F.stump(neck, [0, 1, 0], 0.062 * s, 0.07 * s);
   const shY = hipY + 0.6 * s;
   for (const sd of [-1, 1]) {
-    if (o.missingArm === sd) { ball([sd * 0.2 * s * k, shY, chest[2]], 0.07 * s); continue; }
+    if (o.missingArm === sd) { F.stump([sd * 0.2 * s * k, shY, chest[2]], [sd * 0.8, -0.6, 0], 0.07 * s, 0.06 * s); continue; }
     const sh = [sd * 0.22 * s * k, shY, chest[2]];
     const a = o.arms?.(sd) || { up: 0, fwd: 0.05, elbow: 0.1, out: 0.12 };
     const ua = [Math.sin(a.out) * sd, -Math.cos(a.up) , Math.sin(a.fwd)], l1 = 0.3 * s;
@@ -68,7 +109,7 @@ function human(F, o) {
       const f = o.stride ? (sd === o.stride ? 0.12 : -0.05) : 0, bend = o.contra === sd ? 0.08 : 0;
       kn = [hip[0] * 1.05, hipY * 0.52, f * s + bend * s]; an = [hip[0] * 1.08, 0.08 * s, f * 1.6 * s];
     }
-    if (o.brokenLegs) { limb([hip, [hip[0], (hip[1] + kn[1]) / 2, (hip[2] + kn[2]) / 2]], [0.085 * s * k, 0.075 * s * k]); continue; }
+    if (o.brokenLegs) { F.stump(hip, [0, -1, 0.1], 0.09 * s * k, (hip[1] - kn[1]) * 0.5); continue; }
     limb([hip, kn, an], [0.105 * s * k, 0.07 * s * k, 0.05 * s * k]);
     block(0.11 * s, 0.07 * s, 0.24 * s, null, an[0], an[1] - 0.02 * s, an[2] + 0.07 * s, 5);
   }
@@ -76,14 +117,20 @@ function human(F, o) {
 }
 
 // --- styles ---
-const STYLES = ['kouros', 'roman', 'pharaoh', 'meso', 'moai', 'sphinx', 'fragment', 'kouros', 'roman', 'orator'];
+const STYLES = ['kouros', 'roman', 'pharaoh', 'meso', 'moai', 'sphinx', 'fragment', 'kore', 'roman', 'orator'];
 export function statue(seed) {
   const F = mk(seed), { b, rng } = F;
   const style = STYLES[seed % STYLES.length];
   const dmg = rng();
   const headless = dmg < 0.15, missingArm = dmg > 0.15 && dmg < 0.4 ? (rng() < 0.5 ? -1 : 1) : 0, brokenLegs = dmg > 0.85;
   let name = 'Stone statue', plinth = true;
-  if (style === 'kouros' || style === 'orator' || style === 'roman') {
+  if (style === 'kore') { // draped maiden: ankle-length chiton with deep vertical folds, a himation over one shoulder
+    const J = human(F, { h: 1.7 + rng() * 0.5, slim: 0.85, headless, missingArm, curls: true, arms: (sd) => (sd === 1 ? { up: 0.5, fwd: 0.9, elbow: 1.1, out: 0.2 } : { up: 0.05, fwd: 0.05, elbow: 0.15, out: 0.1 }) });
+    const folds = 11 + Math.floor(rng() * 6), top = J.hipY + 0.5 * J.s;
+    F.lathe((v) => [J.s * (0.19 + 0.12 * v * v), top - v * (top - 0.03)], (a, v) => 1 + 0.09 * Math.sin(a * folds + v * 2) * (0.3 + v) - 0.14 * Math.abs(Math.sin(a)) * (1 - v), 20, 9);
+    F.lathe((v) => [J.s * (0.215 + 0.04 * v), J.shY - v * 0.55 * J.s], (a, v) => 1 + 0.06 * Math.sin(a * 7 - v * 5) - 0.15 * Math.abs(Math.sin(a)), 16, 5);
+    name = headless ? 'Headless kore' : 'Kore (draped maiden)';
+  } else if (style === 'kouros' || style === 'orator' || style === 'roman') {
     const pose = rng();
     const arms = style === 'orator' ? (sd) => (sd === 1 ? { up: 2.2, fwd: 0.9, elbow: 0.3, out: 0.3 } : { up: 0.1, fwd: 0.1, elbow: 1.2, out: 0.1 })
       : pose < 0.3 ? (sd) => ({ up: 0.05, fwd: 0.05, elbow: 0.05, out: 0.08 })
@@ -91,7 +138,10 @@ export function statue(seed) {
           : pose < 0.75 ? (sd) => ({ up: 2.6, fwd: 0.3, elbow: 0.4, out: 0.5 })
             : (sd) => ({ up: 1.2, fwd: 1.2, elbow: 0.5, out: 0.2 });
     const kneel = pose > 0.9 && style !== 'roman';
-    const J = human(F, { h: 1.8 + rng() * 0.8, slim: style === 'kouros' ? 0.9 : 1.05, stride: style === 'kouros' ? -1 : 0, contra: style !== 'kouros' ? 1 : 0, arms, headless, missingArm, brokenLegs, kneel, lean: (rng() - 0.5) * 0.06 });
+    const J = human(F, { h: 1.8 + rng() * 0.8, slim: style === 'kouros' ? 0.9 : 1.05, stride: style === 'kouros' ? -1 : 0, contra: style !== 'kouros' ? 1 : 0, arms, headless, missingArm, brokenLegs, kneel, curls: style === 'kouros', lean: (rng() - 0.5) * 0.06 });
+    if (style === 'orator' && !brokenLegs) { // himation wrapped from the left shoulder to the knees, diagonal folds
+      F.lathe((v) => [J.s * (0.23 + 0.05 * v), J.shY + 0.02 * J.s - v * (J.shY - J.hipY * 0.5)], (a, v) => 1 + 0.08 * Math.sin(a * 9 + v * 6 + a * v * 3) - 0.16 * Math.abs(Math.sin(a)), 18, 8);
+    }
     if (style === 'roman') { // draped robe to the plinth with folds, and a toga sash
       const folds = 9 + Math.floor(rng() * 7), top = J.hipY + 0.45 * J.s;
       F.lathe((v) => [J.s * (0.2 + 0.1 * v) * (1 + 0.05 * Math.sin(v * 7)), top - v * (top - 0.02)], (a, v) => 1 + 0.07 * Math.sin(a * folds + v * 3) * (0.4 + v) - 0.12 * Math.abs(Math.sin(a)) * (1 - v), 18, 8);
@@ -160,8 +210,9 @@ export function statue(seed) {
     b.xform(0, fall < 0.13 ? rotX(-Math.PI / 2) : rotZ(Math.PI / 2 * (fall < 0.19 ? 1 : -1)), 0, 0, 0);
     name = 'Fallen ' + name.charAt(0).toLowerCase() + name.slice(1);
   }
+  erode(b, seed);
   settle(b);
   const t = b.build();
-  t.label = name;
+  t.label = name; t.style = style;
   return t;
 }

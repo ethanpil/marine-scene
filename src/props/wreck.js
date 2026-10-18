@@ -2,9 +2,9 @@
 // decks, broken masts / funnel / superstructure, portholes, rust & growth), optionally broken in two,
 // plus aircraft and submarine wrecks and debris fields. Set pieces are anchored per segment (seg.seed)
 // and built in the chunk that contains their largest s.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots, vary } from './core.js';
+import { Builder, Batch, T, TAU, TUBE, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, placedPoints, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots, vary, tierK, poi } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer, groundY } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -415,83 +415,156 @@ export function initWreck() {
 }
 
 // ---------- per-segment set-piece layout ----------
-const layouts = new Map();
-function pathYaw(ctx, s) { return Math.atan2(-(ctx.pathX(s + 12) - ctx.pathX(s - 12)), 24); }
+// A cheap deterministic plan per segment (community, slots, kinds, names); each slot's pieces are placed
+// lazily the first time a chunk within reach asks, using a 1 m path table for the clearance tests.
+const COMMUNITIES = [
+  { name: 'galleon graveyard', kinds: ['wood', 'wood', 'wood'], gap: 0.55, chest: 0.7, bell: 0.7 },
+  { name: 'WWII wrecks', kinds: ['liberty', 'plane', 'sub'], gap: 0.25, chest: 0, bell: 0.4 },
+  { name: 'modern freighters', kinds: ['modern', 'modern', 'containers'], gap: 0.35, chest: 0, bell: 0.25 },
+  { name: 'mixed wrecks', kinds: null, gap: 0.35, chest: 0.35, bell: 0.5 },
+];
+const GALLEON = ['San Telmo', 'Nuestra Señora de la Luz', 'Santa Rosalía', 'San Ignacio', 'Santo Cristo de Burgos', 'Concepción', 'San Felipe', 'Santa Clara', 'El Rosario', 'San José y las Ánimas', 'La Trinidad', 'San Isidro'];
+const STEEL = ['Meridian', 'Halcyon', 'Northern Star', 'Calliope', 'Kestrel', 'Belmont', 'Celeste', 'Pacific Dawn', 'Marisol', 'Ostrava', 'Cape Lindsay', 'Albatross'];
+const FACT = {
+  wood: ['Spanish treasure fleets shipped New World silver home for over two centuries.', 'Shipworms, which are really clams, eat wooden hulls until mostly ballast and cannons remain.'],
+  steel: ['Steel wrecks turn into reefs within a few years as corals and sponges settle on the plating.'],
+  liberty: ['Over 2,700 Liberty ships were built in WWII; one was launched less than five days after its keel was laid.'],
+  modern: ['Many ships are scuttled on purpose to become artificial reefs and dive sites.'],
+  plane: ['One 1944 raid on Chuuk Lagoon sank dozens of ships and hundreds of aircraft: now a famous wreck dive.'],
+  sub: ['Over 700 Type VII U-boats were built, more than any other submarine class.'],
+};
+const plans = new Map();
+const pathYaw = (ctx, s) => Math.atan2(-(ctx.pathX(s + 12) - ctx.pathX(s - 12)), 24);
 
-function placePiece(ctx, rng, tpl, s, off, yawExtra, roll, sinkK, step = 1.6) {
-  // rotation: ship local -z (bow) points along +s rotated by yaw
-  const yaw = pathYaw(ctx, s) + yawExtra;
-  for (let tries = 0; tries < 40; tries++) {
+function pathTable(ctx, a, b) {
+  const n = Math.ceil(b - a) + 2, X = new Float32Array(n), Y = new Float32Array(n);
+  for (let i = 0; i < n; i++) { X[i] = ctx.pathX(a + i); Y[i] = ctx.pathY(a + i); }
+  return { a, n, X, Y };
+}
+function clearT(P, pts, margin) {
+  const lim = (TUBE + margin) * (TUBE + margin);
+  for (let i = 0; i < pts.length; i += 3) {
+    const u = Math.min(P.n - 1.001, Math.max(0, pts[i + 2] - P.a)), k = Math.floor(u), f = u - k;
+    const dx = pts[i] - (P.X[k] + (P.X[k + 1] - P.X[k]) * f), dy = pts[i + 1] - (P.Y[k] + (P.Y[k + 1] - P.Y[k]) * f);
+    if (dx * dx + dy * dy < lim) return false;
+  }
+  return true;
+}
+
+// seat a piece on the floor: yaw about the path, pitch along its own axis, roll, keel band on the ground
+function placePiece(ctx, fl, P, tpl, s, off, yaw, roll, sinkK, step = 1.6) {
+  const bx = -Math.sin(yaw), bs = Math.cos(yaw); // bow direction (template -z) in (x, s)
+  for (let tries = 0; tries < 30; tries++) {
     const d = off + (tries === 0 ? 0 : Math.sign(off || 1) * (tries * step) * (tries % 2 && off === 0 ? -1 : 1));
     const x = ctx.pathX(s) + d;
-    const len = tpl.pos.length ? 1 : 1;
-    // pitch from floor along the hull
-    const fA = ctx.floorAt(x, s - 12), fB = ctx.floorAt(x, s + 12), y0 = ctx.floorAt(x, s);
-    const pitch = Math.atan2(fB - fA, 24) * 0.8;
-    const R = mul3(rotY(yaw), mul3(rotX(pitch), rotZ(roll)));
-    const y = y0 - sinkK;
-    const pts = placedPoints(tpl, x, y, s, R, 1, 1, 1, 400);
-    if (pointsClear(ctx, pts, 0.6)) {
+    const fA = fl.at(x - bx * 12, s - bs * 12), fB = fl.at(x + bx * 12, s + bs * 12);
+    const R = mul3(rotY(yaw), mul3(rotX(Math.atan2(fB - fA, 24) * 0.8), rotZ(roll)));
+    const y = groundY(fl, x, s, tpl, R, 1, 1, 1) - sinkK;
+    const pts = placedPoints(tpl, x, y, s, R, 1, 1, 1, 600);
+    if (clearT(P, pts, 0.6)) {
       let sMax = -1e9, sMin = 1e9;
       for (let i = 2; i < pts.length; i += 3) { sMax = Math.max(sMax, pts[i]); sMin = Math.min(sMin, pts[i]); }
-      return { tpl, x, y, s, R, sMax, sMin };
+      const [x0, y0, z0, x1, y1, z1] = tpl.box, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
+      const c = [R[0] * cx + R[1] * cy + R[2] * cz + x, R[3] * cx + R[4] * cy + R[5] * cz + y, s - (R[6] * cx + R[7] * cy + R[8] * cz)];
+      return { tpl, x, y, s, R, sMax, sMin, c, r: Math.max(x1 - x0, z1 - z0) / 2 };
     }
   }
   return null;
 }
 
-export function segmentLayout(ctx, seg) {
-  let L = layouts.get(seg.id);
+function segmentPlan(ctx, seg) {
+  let L = plans.get(seg.id);
   if (L && L.seed === seg.seed) return L;
-  const rng = mulberry32(seg.seed ^ 0x5eed);
-  const pieces = [], len = seg.end - seg.start, lo = seg.start + 140, hi = seg.end - 140;
+  const rng = mulberry32(seg.seed ^ 0x5eed), comm = COMMUNITIES[Math.floor(rng() * COMMUNITIES.length)];
+  const slots = [], lo = seg.start + 140, hi = seg.end - 140, used = new Set();
+  const nameOf = (list) => { let n; for (let t = 0; t < 8 && (!n || used.has(n)); t++) n = list[(rng() * list.length) | 0]; used.add(n); return n; };
   if (hi > lo) {
-    const slots = [];
     const n = 2 + (rng() < 0.5 ? 1 : 0);
-    for (let i = 0; i < n; i++) slots.push(lerp(lo, hi, n === 1 ? 0.5 : i / (n - 1)) + (rng() - 0.5) * 40);
+    for (let i = 0; i < n; i++) slots.push({ s: lerp(lo, hi, n === 1 ? 0.5 : i / (n - 1)) + (rng() - 0.5) * 40 });
     // the hero wreck (slot 0) goes where the path is straightest so it can lie close alongside
-    let best = slots[0], bc = 1e9;
+    let bc = 1e9;
     for (let k = 0; k < 16; k++) {
       const c = lerp(lo, Math.min(hi, lo + (hi - lo) * 0.45), k / 15);
       const curv = Math.abs(ctx.pathX(c + 22) - 2 * ctx.pathX(c) + ctx.pathX(c - 22));
-      if (curv < bc) { bc = curv; best = c; }
+      if (curv < bc) { bc = curv; slots[0].s = c; }
     }
-    slots[0] = best;
-    slots.forEach((s, i) => {
-      const r = rng();
-      let kind = i === 1 && r < 0.45 ? (rng() < 0.6 ? 'plane' : 'sub') : rng() < 0.5 ? 'wood' : 'steel';
-      if (i === 2 && kind !== 'plane' && kind !== 'sub') kind = rng() < 0.6 ? 'plane' : 'sub';
-      const side = rng() < 0.5 ? -1 : 1;
-      const hero = i === 0;
-      if (hero && rng() < 0.6) kind = 'wood';
-      const yawX = (rng() - 0.5) * (hero ? 0.1 : 0.4) + (rng() < 0.25 ? Math.PI : 0);
-      if (kind === 'wood' || kind === 'steel') {
-        const broken = !hero && rng() < 0.4;
-        const roll = side * (0.12 + rng() * (hero ? 0.25 : 0.45));
-        const sink = kind === 'wood' ? 1.2 + rng() * 1.2 : 1.6 + rng() * 1.6;
-        const off = hero ? side * ((kind === 'wood' ? 4.3 : 4.8) + 3.6) : rng() < 0.3 ? 0 : side * ((kind === 'wood' ? 4.3 : 4.8) + 4 + rng() * 3);
-        if (broken) {
-          const bow = placePiece(ctx, rng, rng.pick(T.ship[kind + 'Bow']), s + 10, off, yawX + (rng() - 0.5) * 0.5, roll, sink);
-          const st = placePiece(ctx, rng, rng.pick(T.ship[kind + 'Stern']), s - 10, off + side * (2 + rng() * 6), yawX + (rng() - 0.5) * 0.7, -roll * 0.5, sink * 0.8);
-          if (bow) pieces.push(bow); if (st) pieces.push(st);
-        } else {
-          const p = placePiece(ctx, rng, rng.pick(T.ship[kind]), s, off, yawX, roll, sink, hero ? 0.6 : 1.6);
-          if (p) pieces.push(p);
-        }
-      } else if (kind === 'plane') {
-        const p = placePiece(ctx, rng, rng.pick(T.ship.plane), s, side * (9 + rng() * 5), yawX + rng() * TAU, (rng() - 0.5) * 0.25, 0.5);
-        if (p) pieces.push(p);
-      } else {
-        const p = placePiece(ctx, rng, T.ship.sub[0], s, side * (7 + rng() * 5), yawX, side * (0.1 + rng() * 0.3), 1.0);
-        if (p) pieces.push(p);
+    const gapAt = rng() < comm.gap ? 1 + Math.floor(rng() * (n - 1)) : -1;
+    slots.forEach((sl, i) => {
+      let kind = comm.kinds ? comm.kinds[Math.min(i, comm.kinds.length - 1)] : null;
+      if (!kind) {
+        const r = rng();
+        kind = i === 1 && r < 0.45 ? (rng() < 0.6 ? 'plane' : 'sub') : rng() < 0.5 ? 'wood' : 'steel';
+        if (i === 2 && kind !== 'plane' && kind !== 'sub') kind = rng() < 0.6 ? 'plane' : 'sub';
+        if (i === 0 && rng() < 0.6) kind = 'wood';
       }
+      const hull = kind === 'wood' ? 'wood' : kind === 'plane' || kind === 'sub' || kind === 'containers' ? null : 'steel';
+      Object.assign(sl, {
+        kind, hull, hero: i === 0, side: rng() < 0.5 ? -1 : 1, k: (rng() * 1e9) | 0, pieces: null,
+        gap: i === gapAt && !!hull, broken: i !== 0 && !!hull && rng() < 0.4,
+        yawX: (rng() - 0.5) * (i === 0 ? 0.1 : 0.4) + (rng() < 0.25 ? Math.PI : 0),
+        chest: hull === 'wood' && rng() < comm.chest, bell: !!hull && rng() < comm.bell,
+      });
+      const yr = (a, b) => a + Math.floor(rng() * (b - a));
+      sl.name = kind === 'wood' ? `Galleon ${nameOf(GALLEON)} (${yr(1622, 1790)})`
+        : kind === 'liberty' ? `Liberty ship SS ${nameOf(STEEL)} (${yr(1942, 1945)})`
+        : kind === 'modern' ? `MV ${nameOf(STEEL)} (${yr(1968, 2004)})`
+        : kind === 'steel' ? `SS ${nameOf(STEEL)} (${yr(1898, 1939)})`
+        : kind === 'plane' ? `Twin-engine bomber (${yr(1942, 1945)})`
+        : kind === 'sub' ? `Type VII U-boat (${yr(1941, 1945)})` : 'Lost container cargo';
+      sl.short = sl.name.replace(/^(Galleon|Liberty ship|MV|SS) /, '').replace(/^SS /, '').replace(/ \(\d+\)$/, '');
+      const fl = FACT[kind];
+      sl.fact = fl ? fl[(rng() * fl.length) | 0] : null;
     });
   }
-  pieces.forEach((p, i) => { p.kind = p.tpl === T.ship.sub[0] ? 'sub' : T.ship.plane.includes(p.tpl) ? 'plane' : T.ship.wood.includes(p.tpl) || T.ship.woodBow.includes(p.tpl) || T.ship.woodStern.includes(p.tpl) ? 'wood' : 'steel'; });
-  L = { seed: seg.seed, pieces };
-  layouts.set(seg.id, L);
-  if (layouts.size > 24) layouts.delete(layouts.keys().next().value);
+  L = { seed: seg.seed, comm, slots };
+  plans.set(seg.id, L);
+  if (plans.size > 24) plans.delete(plans.keys().next().value);
   return L;
+}
+
+// place a slot's pieces (once): whole hull, broken halves, a hull gap across the path, plane or sub
+function slotPieces(ctx, gnd, sl) {
+  if (sl.pieces) return sl.pieces;
+  const rng = mulberry32(sl.k), s = sl.s, side = sl.side, P = pathTable(ctx, s - 70, s + 70), out = [];
+  const fl = { at: (x, ss) => gnd.floor(x, ss) }; // floor only: identical whichever chunk computes it
+  const yaw0 = pathYaw(ctx, s);
+  const push = (p, lbl) => { if (p) { p.lbl = lbl; out.push(p); } return p; };
+  if (sl.hull) {
+    const k = sl.hull, roll = side * (0.12 + rng() * (sl.hero ? 0.25 : 0.45)), sink = k === 'wood' ? 0.8 + rng() * 1.0 : 1.0 + rng() * 1.2;
+    if (sl.gap) { // broken in two across the path: the camera threads the gap between the halves
+      const yaw = yaw0 - side * Math.PI / 2 + (rng() - 0.5) * 0.15, bow = rng.pick(T.ship[k + 'Bow']), st = rng.pick(T.ship[k + 'Stern']);
+      const cutB = bow.box[5]; // bow half: its cut end is at template +z
+      const a = push(placePiece(ctx, fl, P, bow, s, side * (TUBE + 1.2 + Math.max(0, cutB)), yaw, (rng() - 0.5) * 0.2, sink, 0.6), sl.name + ', bow section');
+      const b = push(placePiece(ctx, fl, P, st, s + (rng() - 0.5) * 2, -side * (TUBE + 1.2), yaw + (rng() - 0.5) * 0.3, (rng() - 0.5) * 0.2, sink * 0.8, 0.6), sl.name + ', stern section');
+      if (a && b) sl.arch = { x: ctx.pathX(s), y: ctx.pathY(s), s };
+    } else if (sl.broken) {
+      const off = rng() < 0.3 ? 0 : side * ((k === 'wood' ? 4.3 : 4.8) + 4 + rng() * 3);
+      push(placePiece(ctx, fl, P, rng.pick(T.ship[k + 'Bow']), s + 10, off, yaw0 + sl.yawX + (rng() - 0.5) * 0.5, roll, sink), sl.name + ', bow section');
+      push(placePiece(ctx, fl, P, rng.pick(T.ship[k + 'Stern']), s - 10, off + side * (2 + rng() * 6), yaw0 + sl.yawX + (rng() - 0.5) * 0.7, -roll * 0.5, sink * 0.8), sl.name + ', stern section');
+    } else {
+      const off = sl.hero ? side * ((k === 'wood' ? 4.3 : 4.8) + 3.6) : rng() < 0.3 ? 0 : side * ((k === 'wood' ? 4.3 : 4.8) + 4 + rng() * 3);
+      push(placePiece(ctx, fl, P, rng.pick(T.ship[k]), s, off, yaw0 + sl.yawX, roll, sink, sl.hero ? 0.6 : 1.6), sl.name);
+    }
+  } else if (sl.kind === 'plane') {
+    push(placePiece(ctx, fl, P, rng.pick(T.ship.plane), s, side * (9 + rng() * 5), yaw0 + sl.yawX + rng() * TAU, (rng() - 0.5) * 0.25, 0.35), sl.name);
+  } else if (sl.kind === 'sub') {
+    push(placePiece(ctx, fl, P, T.ship.sub[0], s, side * (7 + rng() * 5), yaw0 + sl.yawX, side * (0.1 + rng() * 0.3), 0.9), sl.name);
+  }
+  // delights around the wreck, placed by whichever chunk contains them
+  sl.extras = [];
+  const h = out[0];
+  if (h) {
+    const away = h.c[0] > ctx.pathX(h.c[2]) ? 0 : Math.PI; // the far side, away from the camera line
+    if (sl.chest) { const a = away + (rng() - 0.5) * 1.6, r = h.r * 0.6 + 3 + rng() * 4; sl.extras.push({ type: 'chest', x: h.c[0] + Math.cos(a) * r, s: h.c[2] + Math.sin(a) * r }); }
+    if (sl.bell) { const a = rng() * TAU, r = h.r * 0.5 + 2 + rng() * 3; sl.extras.push({ type: 'bell', x: h.c[0] + Math.cos(a) * r, s: h.c[2] + Math.sin(a) * r }); }
+  }
+  if (sl.kind === 'containers' || sl.kind === 'modern') { // spilled cargo, some stacked
+    const cx = ctx.pathX(s) + side * (11 + rng() * 8), n = sl.kind === 'containers' ? 12 + Math.floor(rng() * 6) : 5 + Math.floor(rng() * 4);
+    for (let q = 0; q < n; q++) sl.extras.push({ type: 'container', x: cx + (rng() - 0.5) * 22, s: s + (rng() - 0.5) * 34, stack: rng() < 0.35, k: (rng() * 1e9) | 0 });
+    if (sl.kind === 'containers') sl.cargo = { x: cx, s };
+  }
+  sl.pieces = out;
+  return out;
 }
 
 const S = {};
@@ -511,6 +584,10 @@ function specs() {
     frag: { tpl: D.frag, scale: [0.8, 1.2], follow: 0.9, tilt: 0.15, sink: 0.12, tint: tintFrom([[1, 1, 1]]) },
     fragSteel: { tpl: D.fragSteel, scale: [0.8, 1.2], follow: 0.9, tilt: 0.15, sink: 0.12, tint: tintFrom([[1, 1, 1]]) },
     mast: { tpl: D.mast, scale: [0.9, 1.1], follow: 0.1, tint: tintFrom([[1, 1, 1]]) },
+    chest: { tpl: T.chest, scale: [1, 1.15], follow: 0.8, tilt: 0.15, sink: 0.08, tint: tintFrom([[1, 1, 1]], 0.06) },
+    bell: { tpl: T.bell, scale: [1, 1.2], follow: 0.8, sink: 0.12, tint: tintFrom([[1, 1, 1]], 0.08) },
+    coins: { tpl: T.coinSpill, scale: [1, 1.2], tint: tintFrom([[1, 1, 1]], 0.05) },
+    container: { tpl: T.container, scale: [1, 1], follow: 0.5, sink: 0.04, support: true, occ: 1, tint: tintFrom([[1, 1, 1], [0.8, 0.8, 0.8]], 0.1) },
     pebbles: { tpl: T.pebbles, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[0.55, 0.45, 0.38], [0.45, 0.32, 0.25]], 0.1) },
     algae: { tpl: T.algae, scale: [0.6, 1.4], follow: 1, sink: 0.01, tint: tintFrom([[0.55, 0.6, 0.4]], 0.1) },
     sponge: { tpl: T.tubeSp, scale: [0.4, 0.9], follow: 0.5, tint: tintFrom([[0.55, 0.35, 0.18], [0.45, 0.25, 0.35]]) },
@@ -526,37 +603,69 @@ function specs() {
 
 export function layoutWreck(ctx) {
   if (presence(ctx, 'wreck') <= 0) return null;
-  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
-  const ships = new Batch(MAT.static, 70000), st = new Batch(MAT.static, 60000 * budgetK(ctx, 'wreck')), sw = new Batch(MAT.sway, 10000 * budgetK(ctx, 'wreck'));
-  const idx = Math.floor(ctx.s0 / 64);
-  const near = [];
+  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), bk = budgetK(ctx, 'wreck'), tk = tierK(ctx);
+  const ships = new Batch(MAT.static, 90000), st = new Batch(MAT.static, 16000 * bk);      // hulls; big pieces, delights
+  const mid = new Batch(MAT.static, 34000 * bk * tk, 'mid'), sw = new Batch(MAT.sway, 8000 * bk * tk, 'mid'); // debris field
+  const near = new Batch(MAT.static, 12000 * bk * tk, 'near');                               // floor micro detail
+  const idx = Math.floor(ctx.s0 / 64), inChunk = (s) => s >= ctx.s0 && s < ctx.s1;
+  const close = [];
   for (const seg of ctx.segments) {
     if (seg.key !== 'wreck') continue;
-    for (const p of segmentLayout(ctx, seg).pieces) {
-      if (Math.floor(p.sMax / 64) === idx) ships.add(p.tpl, p.x, p.y, -(p.s - ctx.s0), p.R, 1, 1, 1, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 1);
-      if (p.sMax > ctx.s0 - 40 && p.sMin < ctx.s1 + 40) near.push(p);
+    const plan = segmentPlan(ctx, seg);
+    for (const sl of plan.slots) {
+      if (sl.s < ctx.s0 - 100 || sl.s > ctx.s1 + 100) continue;
+      for (const p of slotPieces(ctx, fs, sl)) {
+        if (Math.floor(p.sMax / 64) === idx && ships.add(p.tpl, p.x, p.y, -(p.s - ctx.s0), p.R, 1, 1, 1, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 1)) {
+          const it = ships.last;
+          it.g = 1; it.lbl = p.lbl; it.fact = sl.fact;
+          poi(ctx, 'wreck', p.c[0], p.c[1], p.c[2], p.r, { name: p.lbl, kind: sl.kind, community: plan.comm.name });
+        }
+        if (p.sMax > ctx.s0 - 40 && p.sMin < ctx.s1 + 40) close.push([p, sl]);
+      }
+      if (sl.arch && inChunk(sl.arch.s)) poi(ctx, 'arch', sl.arch.x, sl.arch.y, sl.arch.s, TUBE + 1.2, { kind: 'hull gap', name: sl.name });
+      if (sl.cargo && inChunk(sl.cargo.s)) poi(ctx, 'wreck', sl.cargo.x, fs.at(sl.cargo.x, sl.cargo.s) + 2, sl.cargo.s, 16, { name: sl.name, kind: 'containers' });
+      for (const e of sl.extras) {
+        if (!inChunk(e.s)) continue;
+        if (e.type === 'chest') {
+          if (putFloor(ctx, fs, st, sp.chest, e.x, e.s, rng)) {
+            const it = st.last, yaw = Math.atan2(it.R[2], it.R[0]), f = it.tpl.front * it.sx + 0.05;
+            putFloor(ctx, fs, st, { ...sp.coins, yaw, yawJ: 0.2 }, e.x + it.R[2] * f, e.s - it.R[8] * f, rng); // gold spilling out of the front
+            poi(ctx, 'treasure', e.x, fs.at(e.x, e.s) + 0.4, e.s, 2, { wreck: sl.name });
+          }
+        } else if (e.type === 'bell') {
+          if (putFloor(ctx, fs, st, sp.bell, e.x, e.s, rng)) st.last.lbl = "Ship's bell of the " + sl.short;
+        } else { // container, sometimes with a shorter one stacked on top (same yaw, inside its roof)
+          const cr = mulberry32(e.k), long = T.container.filter((t) => t.box[3] - t.box[0] > 10), short = T.container.filter((t) => t.box[3] - t.box[0] < 10);
+          const stack = e.stack && long.length && short.length, base = stack ? long[(cr() * long.length) | 0] : T.container[(cr() * T.container.length) | 0], yaw = cr() * TAU;
+          if (!putFloor(ctx, fs, st, { ...sp.container, tpl: base, yaw, yawJ: 0 }, e.x, e.s, cr) || !stack) continue;
+          const o = (cr() - 0.5) * 4, it = st.last; // along the long axis (template x)
+          putFloor(ctx, fs, st, { ...sp.container, tpl: short[(cr() * short.length) | 0], yaw, yawJ: 0.02, occ: 0 }, it.x + Math.cos(yaw) * o, e.s + Math.sin(yaw) * o, cr);
+        }
+      }
     }
   }
+  const more = [];
   // debris fields around nearby wrecks (only the part inside this chunk)
-  for (const p of near) {
-    const list = p.kind === 'wood' ? sp.wood : sp.steel;
-    for (let k = 0; k < 40; k++) {
+  more.push(() => { for (const [p, sl] of close) {
+    const list = sl.hull === 'wood' ? sp.wood : sp.steel;
+    for (let k = 0; k < 40 * tk; k++) {
       const a = rng() * TAU, r = 4 + Math.pow(rng(), 1.5) * 26, s = p.s + Math.sin(a) * r * 1.3, x = p.x + Math.cos(a) * r;
-      if (s < ctx.s0 || s >= ctx.s1) continue;
+      if (!inChunk(s)) continue;
       const e = pickW(rng, list);
-      putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], x, s, rng);
+      putFloor(ctx, fs, e.sway ? sw : mid, sp[e.k], x, s, rng);
     }
-  }
-  const nextP551 = clusterer(ctx, rng, 0, 45, 1);
-  for (let k = 0; k < 60; k++) {
-    const p = nextP551();
-    if (!p) continue;
-    if (rng() > ctx.weightOf(p.s, 'wreck')) continue;
-    const e = pickW(rng, sp.sparse);
-    putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 1 + sstep(5, 30, p.d));
-  }
-  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'wreck') * 0.5) putBend(ctx, fs, st, rng() < 0.6 ? sp.mast : sp.rock, b, rng);
-  microDetail(ctx, fs, st, rng, 'wreck', sp.micro, 90, 26);
-  ships.split = 2; st.split = 1; sw.split = 1; st.from = 1; sw.from = 1;
-  return { batches: [ships, st, sw] };
+  } });
+  more.push(() => {
+    const nextP551 = clusterer(ctx, rng, 0, 45, 1);
+    for (let k = 0; k < 60 * tk; k++) {
+      const p = nextP551();
+      if (!p) continue;
+      if (rng() > ctx.weightOf(p.s, 'wreck')) continue;
+      const e = pickW(rng, sp.sparse);
+      putFloor(ctx, fs, e.sway ? sw : mid, sp[e.k], p.x, p.s, rng, 1 + sstep(5, 30, p.d));
+    }
+    for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'wreck') * 0.5) putBend(ctx, fs, st, rng() < 0.6 ? sp.mast : sp.rock, b, rng);
+  });
+  more.push(() => microDetail(ctx, fs, near, rng, 'wreck', sp.micro, 90, 26));
+  return { batches: [ships, st, mid, sw, near], more };
 }

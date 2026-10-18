@@ -1,7 +1,7 @@
 // Sand flats: rippled turquoise plain with dense small life (shells, sand dollars, sea pens, stars,
 // cucumbers, conchs, grass tufts, coral rubble, shell grit, garden-eel burrow colonies), occasional
 // coral heads / rocks, and pinnacles or big coral heads on the outside of bends to steer around.
-import { Builder, Batch, T, TAU, sat, lerp, vn3, floorSampler, presence, budgetK, bendSpots, vary } from './core.js';
+import { Builder, Batch, T, TAU, sat, lerp, vn3, floorSampler, presence, budgetK, bendSpots, vary, tierK, poi } from './core.js';
 import { grassPatch } from './shapes.js';
 import { putFloor, putAt, pickW, tintFrom, spot, putBend, bendX, microDetail, clusterer } from './scatter.js';
 import { bommie } from './reef.js';
@@ -11,17 +11,18 @@ import { mulberry32, noise2 } from '../noise.js';
 function seaPen(seed) {
   const b = new Builder(), rng = mulberry32(seed), H = 0.3 + 0.06 * (seed % 5);
   b.tube([[0, -0.05, 0], [0, H * 0.4, 0], [0.01, H, 0.01]], [0.012, 0.01, 0.006], 4, (v, a, x, y, z, o) => {
-    o[3] = 0.9; o[4] = 0.75; o[5] = 0.55; o[6] = 0.03 * v * v; o[7] = 0;
+    o[3] = 0.9; o[4] = 0.75; o[5] = 0.55; o[6] = 0.03 * v * v; o[7] = 6;
   });
   for (let k = 0; k < 9; k++) {
     const y = H * (0.42 + 0.06 * k), w = 0.07 * Math.sin(((k + 1) / 10) * Math.PI) + 0.02;
     for (const sd of [-1, 1]) {
       b.grid(1, 2, (u, v, i, j, o) => {
         o[0] = sd * v * w; o[1] = y + v * 0.025 + (u - 0.5) * 0.03; o[2] = (u - 0.5) * 0.015 + 0.01 * v;
-        const t = sat(y / H); o[3] = 1.0; o[4] = 0.55 + 0.25 * v; o[5] = 0.3; o[6] = 0.03 * t * t + 0.01; o[7] = 0;
+        const t = sat(y / H); o[3] = 1.0; o[4] = 0.55 + 0.25 * v; o[5] = 0.3; o[6] = 0.03 * t * t + 0.01; o[7] = 6;
       });
     }
   }
+  b.label = 'Sea pen'; b.fact = 'Each sea pen is a colony of polyps, and many species glow green at night when disturbed.';
   return b.build();
 }
 
@@ -34,6 +35,7 @@ function burrows(seed, { n = 9, r = 1.4 } = {}) {
       (v, ang, x, y, z, o) => { const c = v > 0.8 ? 0.15 : 0.85 + 0.1 * Math.sin(ang * 3); o[3] = 0.92 * c; o[4] = 0.86 * c; o[5] = 0.72 * c; o[7] = 2; });
     b.xform(v0, [1, 0, 0, 0, 1, 0, 0, 0, 1], cx, 0, cz, s, s, s);
   }
+  b.label = 'Garden eel burrows'; b.fact = 'Garden eels almost never leave their burrows: they sway in the current, snatching plankton.';
   return b.build();
 }
 
@@ -67,43 +69,53 @@ function specs() {
     { w: 1.2, spec: S.star }, { w: 1, spec: S.cucumber }, { w: 0.8, spec: S.algae }, { w: 0.6, spec: S.burrow },
   ];
   S.soft = [{ w: 3, spec: S.tuft }, { w: 1.6, spec: S.pen }];
+  S.bottle = { tpl: T.bottle, scale: [1, 1.15], follow: 0.9, sink: 0.5, tint: tintFrom([[1, 1, 1]], 0.08) };
   return S;
 }
 
 export function layoutSandflat(ctx) {
   if (presence(ctx, 'sandflat') <= 0) return null;
-  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), bk = budgetK(ctx, 'sandflat');
-  const st = new Batch(MAT.static, 130000 * bk), sw = new Batch(MAT.sway, 60000 * bk);
+  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), bk = budgetK(ctx, 'sandflat'), tk = tierK(ctx);
+  const st = new Batch(MAT.static, 24000 * bk);                                    // pinnacles, coral heads, rocks
+  const mid = { st: new Batch(MAT.static, 30000 * bk * tk, 'mid'), sw: new Batch(MAT.sway, 14000 * bk * tk, 'mid') }; // colonies
+  const near = new Batch(MAT.static, 80000 * bk * tk, 'near'), nsw = new Batch(MAT.sway, 40000 * bk * tk, 'near'); // small life
+  const head = { mid, near: { st: near, sw: nsw } };
   // steer-around features on the outside of bends: a big coral head or a rock pinnacle
   for (const b of bendSpots(ctx)) {
     if (rng() > ctx.weightOf(b.s, 'sandflat') * 0.8) continue;
     if (rng() < 0.5) putBend(ctx, fs, st, sp.pinnacle, b, rng);
-    else { const x = bendX(ctx, b, 3.6, rng); bommie(ctx, fs, st, sw, rng, x, b.s, 1.2, 9, 1.05, null); }
+    else { const x = bendX(ctx, b, 3.6, rng); bommie(ctx, fs, st, mid.sw, rng, x, b.s, 1.2, 9, 1.05, null, head); }
   }
   // occasional coral heads / rocks out on the flat
   for (let k = 0; k < 4; k++) {
     const p = spot(ctx, rng, 7, 34, 1);
     if (rng() > ctx.weightOf(p.s, 'sandflat') * 0.7) continue;
-    if (rng() < 0.6) bommie(ctx, fs, st, sw, rng, p.x, p.s, 0.8, 5, 0.9, null);
+    if (rng() < 0.6) bommie(ctx, fs, st, mid.sw, rng, p.x, p.s, 0.8, 5, 0.9, null, head);
     else putFloor(ctx, fs, st, sp.rock, p.x, p.s, rng, 1.5);
   }
-  // garden-eel colonies: clusters of burrows
+  // garden-eel colonies: clusters of burrows (the eels themselves are creatures that gather at the POI)
   for (let k = 0; k < 3; k++) {
     const p = spot(ctx, rng, 0, 28, 1);
     if (rng() > ctx.weightOf(p.s, 'sandflat') * 0.6) continue;
-    for (let j = 0; j < 5; j++) putFloor(ctx, fs, st, sp.burrow, p.x + (rng() - 0.5) * 5, p.s + (rng() - 0.5) * 5, rng);
+    let n = 0;
+    for (let j = 0; j < 5; j++) if (putFloor(ctx, fs, near, sp.burrow, p.x + (rng() - 0.5) * 5, p.s + (rng() - 0.5) * 5, rng)) n++;
+    if (n >= 2) poi(ctx, 'garden-eel-field', p.x, fs.at(p.x, p.s) + 0.4, p.s, 4, { burrows: n });
   }
-  // dense small life everywhere, including under the camera; patchy via noise
-  microDetail(ctx, fs, st, rng, 'sandflat', sp.micro, 420, 32);
+  // dense small life everywhere, including under the camera; patchy via noise (spread over stages)
+  const more = [() => microDetail(ctx, fs, near, rng, 'sandflat', sp.micro, 210, 32), () => microDetail(ctx, fs, near, rng, 'sandflat', sp.micro, 210, 32)];
   const nextP99 = clusterer(ctx, rng, 0, 30, 1.2);
-  for (let k = 0; k < 260; k++) {
-    const p = nextP99();
-    if (!p) continue;
-    const w = ctx.weightOf(p.s, 'sandflat') * (0.4 + 0.6 * Math.max(0, noise2(p.x / 9, p.s / 9, 931) + 0.4));
-    if (rng() > w) continue;
-    const e = pickW(rng, sp.soft);
-    putFloor(ctx, fs, sw, e.spec, p.x, p.s, rng);
-  }
-  st.split = 3; sw.split = 3;
-  return { batches: [st, sw] };
+  const soft = () => {
+    for (let k = 0; k < 130 * tk; k++) {
+      const p = nextP99();
+      if (!p) continue;
+      const w = ctx.weightOf(p.s, 'sandflat') * (0.4 + 0.6 * Math.max(0, noise2(p.x / 9, p.s / 9, 931) + 0.4));
+      if (rng() > w) continue;
+      const e = pickW(rng, sp.soft);
+      putFloor(ctx, fs, nsw, e.spec, p.x, p.s, rng);
+    }
+  };
+  more.push(soft, soft);
+  // rare delight: a message in a bottle, half buried in the sand
+  if (rng() < 0.05) for (let t = 0; t < 6; t++) { const p = spot(ctx, rng, 2.5, 10, 1.3); if (putFloor(ctx, fs, st, sp.bottle, p.x, p.s, rng)) break; }
+  return { batches: [st, mid.st, mid.sw, near, nsw], more };
 }
