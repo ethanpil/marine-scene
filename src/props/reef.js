@@ -1,7 +1,7 @@
 // Coral reef: bommies (coral heads) built around a massive coral / rock core, plus scattered life.
 import { Builder, Batch, T, TAU, fbm3, vn3, sat, sstep, lerp, floorSampler, presence, budgetK, bendSpots, rotX, rotY, rotZ, mul3, tierK, poi, pointsClear, placedPoints } from './core.js';
 import { rockInto, branchesInto, seaFan, tubeSponges, softCoral, leatherCoral, anemone, seaWhips, seastar, urchin } from './shapes.js';
-import { putAt, putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer, groundY } from './scatter.js';
+import { putAt, putFloor, pickW, tintFrom, spot, bendX, microDetail, microSteps, steps, clusterer, groundY } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -306,29 +306,36 @@ function commTint(spec, comm, rng) {
 const SMALL = new Set(['soft', 'fan', 'whip', 'finger', 'lettuce', 'anem', 'mushroom', 'leather', 'clam', 'star', 'urchin', 'linckia', 'cots']);
 // One coral head: a massive-coral mound (a support) with colonies seated on its real surface and around
 // its foot. opts: { mid: {st, sw} colony batches, near: {st, sw} small-life batches (worms too), comm }
+// Returns continuation steps (the mound, then 3 colonies per step); run them in order, back to back.
 export function bommie(ctx, fs, st, sw, rng, x, s, moundK, n, coralK, list, opts = {}) {
   const R = specs(), comm = opts.comm, nr = opts.near;
   const cst = opts.mid ? opts.mid.st : st, csw = opts.mid ? opts.mid.sw : sw;
-  const csc = putFloor(ctx, fs, st, R.mound, x, s, rng, moundK * (comm && comm.mound || 1));
-  const tpl = T.coralMound[0], domeR = csc ? tpl.r * csc * 0.9 : 0.6;
   const L = list || listFor(comm);
+  let csc = 0, domeR = 0.6;
   n = Math.max(1, Math.round(n * tierK(ctx)));
-  for (let k = 0; k < n; k++) {
-    const e = pickW(rng, L), sp = R[e.k];
-    const a = rng() * TAU, rr = (domeR + 1.0) * Math.sqrt(rng());
-    const ix = x + Math.cos(a) * rr, is = s + Math.sin(a) * rr;
-    const spec = comm ? { ...sp, tint: (r) => commTint(sp, comm, r), occ: 0.55, layer: 1 } : { ...sp, occ: 0.55, layer: 1 };
-    const small = nr && SMALL.has(e.k);
-    putFloor(ctx, fs, e.sway ? (small ? nr.sw : csw) : small ? nr.st : cst, spec, ix, is, rng, coralK);
-  }
+  const out = [() => {
+    csc = putFloor(ctx, fs, st, R.mound, x, s, rng, moundK * (comm && comm.mound || 1));
+    if (csc) domeR = T.coralMound[0].r * csc * 0.9;
+  }];
+  for (let k0 = 0; k0 < n; k0 += 3) out.push(() => {
+    for (let k = k0; k < Math.min(n, k0 + 3); k++) {
+      const e = pickW(rng, L), sp = R[e.k];
+      const a = rng() * TAU, rr = (domeR + 1.0) * Math.sqrt(rng());
+      const ix = x + Math.cos(a) * rr, is = s + Math.sin(a) * rr;
+      const spec = comm ? { ...sp, tint: (r) => commTint(sp, comm, r), occ: 0.55, layer: 1 } : { ...sp, occ: 0.55, layer: 1 };
+      const small = nr && SMALL.has(e.k);
+      putFloor(ctx, fs, e.sway ? (small ? nr.sw : csw) : small ? nr.st : cst, spec, ix, is, rng, coralK);
+    }
+  });
   // tiny delights on the coral head: christmas-tree worms and feather dusters (retract when you come close)
-  if (nr && csc) {
+  if (nr) out.push(() => {
+    if (!csc) return;
     for (let k = 0; k < 1 + Math.floor(rng() * 3); k++) {
       const a = rng() * TAU, rr = domeR * 0.8 * Math.sqrt(rng());
       putFloor(ctx, fs, nr.sw, rng() < 0.65 ? R.xmas : R.duster, x + Math.cos(a) * rr, s + Math.sin(a) * rr, rng);
     }
-  }
-  return csc;
+  });
+  return out;
 }
 
 // Coral banks line both sides of a sandy valley: rows of coral heads, densest near the path.
@@ -379,69 +386,73 @@ export function layoutReef(ctx) {
   const st = new Batch(MAT.static, 34000 * bk);                       // coral heads, arches, ledges
   const mid = { st: new Batch(MAT.static, 86000 * bk * tk, 'mid'), sw: new Batch(MAT.sway, 42000 * bk * tk, 'mid') };
   const near = { st: new Batch(MAT.static, 30000 * bk * tk, 'near'), sw: new Batch(MAT.sway, 44000 * bk * tk, 'near') }; // small life, worms
-  const idx = Math.floor(ctx.s0 / 64);
-  // set pieces anchored to the segment
+  const idx = Math.floor(ctx.s0 / 64), head = { mid, near, comm }, more = [];
+  // set pieces anchored to the segment (each a small continuation step)
   for (const seg of ctx.segments) {
     if (seg.key !== 'reef') continue;
     const S = reefSet(seg);
     for (const a of S.arches) if (Math.floor((a.s + 3) / 64) === idx) {
-      const ar = placeArch(ctx, fs, st, mid, mulberry32(a.k), a.s, T.arch);
-      if (ar) { // colonies on the crown
-        const ar2 = mulberry32(a.k + 1), A = ar.tpl.arch.A, yaw = pathYaw(ctx, a.s);
-        for (let k = 0; k < 18; k++) {
+      const arch = {}, ar2 = mulberry32(a.k + 1);
+      more.push(() => { arch.it = placeArch(ctx, fs, st, mid, mulberry32(a.k), a.s, T.arch); });
+      for (let half = 0; half < 2; half++) more.push(() => { // colonies on the crown
+        if (!arch.it) return;
+        const A = arch.it.tpl.arch.A, yaw = pathYaw(ctx, a.s);
+        for (let k = 0; k < 9; k++) {
           const t = (ar2() - 0.5) * 1.3, ox = Math.cos(yaw) * A * t, os = Math.sin(yaw) * A * t + (ar2() - 0.5) * 1.2;
           const e = pickW(ar2, listFor(comm)), small = SMALL.has(e.k);
           putFloor(ctx, fs, e.sway ? (small ? near.sw : mid.sw) : small ? near.st : mid.st, { ...R[e.k], tint: (r) => commTint(R[e.k], comm, r) }, ctx.pathX(a.s) + ox, a.s + os, ar2, 0.9);
         }
-      }
+      });
     }
     if (Math.floor(S.station / 64) === idx) { // cleaning station: a big, busy coral head
       const xs = ctx.pathX(S.station) + S.side * (8 + rng() * 3);
-      const csc = bommie(ctx, fs, st, mid.sw, rng, xs, S.station, 1.5, 14, 1.15, null, { mid, near, comm });
-      const top = fs.at(xs, S.station);
-      poi(ctx, 'cleaning-station', xs, top + 3, S.station, 7, { comm: comm.name });
-      if (ctx.addLabel) ctx.addLabel('Cleaning station', xs, top + 1.5, S.station, 'Mantas and groupers queue here while cleaner wrasse and shrimp pick off parasites.');
+      more.push(...bommie(ctx, fs, st, mid.sw, rng, xs, S.station, 1.5, 14, 1.15, null, head), () => {
+        const top = fs.at(xs, S.station);
+        poi(ctx, 'cleaning-station', xs, top + 3, S.station, 7, { comm: comm.name });
+        if (ctx.addLabel) ctx.addLabel('Cleaning station', xs, top + 1.5, S.station, 'Mantas and groupers queue here while cleaner wrasse and shrimp pick off parasites.');
+      });
     }
   }
-  // coral banks, one row per stage (each row of coral heads is a few ms of seating work)
-  const more = ROWS.flatMap((row) => [-1, 1].map((side) => () => {
+  // coral banks: a few steps per coral head (its parameters are drawn now, so the draw order is fixed)
+  for (const row of ROWS) for (const side of [-1, 1]) {
     for (let s = ctx.s0 + rng() * row.step; s < ctx.s1; s += row.step * (0.75 + 0.5 * rng()) / (comm.rows || 1)) {
       if (rng() > ctx.weightOf(s, 'reef')) continue;
-      const x = ctx.pathX(s) + side * lerp(row.d[0], row.d[1], rng());
-      bommie(ctx, fs, st, mid.sw, rng, x, s, row.m * (0.8 + 0.4 * rng()), row.n + (rng() < 0.5 ? 1 : 0), row.k, null, { mid, near, comm });
+      const x = ctx.pathX(s) + side * lerp(row.d[0], row.d[1], rng()), m = row.m * (0.8 + 0.4 * rng()), n = row.n + (rng() < 0.5 ? 1 : 0);
+      more.push(...bommie(ctx, fs, st, mid.sw, rng, x, s, m, n, row.k, null, head));
     }
-  }));
-  more.push(() => {
-    // coral heads on the outside of bends: seen dead ahead, the camera curves past
-    for (const b of bendSpots(ctx)) {
-      if (rng() > ctx.weightOf(b.s, 'reef') * 0.85) continue;
-      bommie(ctx, fs, st, mid.sw, rng, bendX(ctx, b, T.coralMound[0].r * 2.4, rng, 1.2), b.s, 1.25, 10, 1.1, null, { mid, near, comm });
-    }
-    // an overhanging ledge now and then (lobsters and sweepers shelter beneath)
-    if (rng() < 0.45 * pres) placeLedge(ctx, fs, st, rng, T.ledge);
-  });
+  }
+  // coral heads on the outside of bends: seen dead ahead, the camera curves past
+  for (const b of bendSpots(ctx)) {
+    if (rng() > ctx.weightOf(b.s, 'reef') * 0.85) continue;
+    const x = bendX(ctx, b, T.coralMound[0].r * 2.4, rng, 1.2);
+    more.push(...bommie(ctx, fs, st, mid.sw, rng, x, b.s, 1.25, 10, 1.1, null, head));
+  }
+  // an overhanging ledge now and then (lobsters and sweepers shelter beneath)
+  if (rng() < 0.45 * pres) more.push(...placeLedge(ctx, fs, st, rng, T.ledge));
   return { batches: [st, mid.st, mid.sw, near.st, near.sw], more };
 }
 
-// rock overhang beside the path, lip facing the camera
+// rock overhang beside the path, lip facing the camera. Returns continuation steps (one candidate spot each).
 export function placeLedge(ctx, gnd, st, rng, list) {
   const s = ctx.s0 + 8 + rng() * 48, side = rng() < 0.5 ? -1 : 1, tpl = list[(rng() * list.length) | 0], sc = 0.85 + rng() * 0.4;
-  const yaw = (side > 0 ? Math.PI : 0) + pathYaw(ctx, s) + (rng() - 0.5) * 0.4, R = rotY(yaw);
-  for (let d = 4.2 + tpl.r * sc; d < 10 + tpl.r * sc; d += 0.8) {
+  const yaw = (side > 0 ? Math.PI : 0) + pathYaw(ctx, s) + (rng() - 0.5) * 0.4, R = rotY(yaw), out = [];
+  let done = false;
+  for (let d = 4.2 + tpl.r * sc; d < 10 + tpl.r * sc; d += 0.8) out.push(() => {
+    if (done) return;
     const x = ctx.pathX(s) + side * d;
-    if (!gnd.free(x, s, tpl.r * sc * 0.6, 0)) continue;
+    if (!gnd.free(x, s, tpl.r * sc * 0.6, 0)) return;
     const y = groundY(gnd, x, s, tpl, R, sc, sc, sc) - 0.15;
-    if (!pointsClear(ctx, placedPoints(tpl, x, y, s, R, sc, sc, sc, 400), 0.45)) continue;
-    if (!st.add(tpl, x, y, -(s - ctx.s0), R, sc, sc, sc, 1, 1, 1, 0.8 + rng() * 0.5)) return null;
+    if (!pointsClear(ctx, placedPoints(tpl, x, y, s, R, sc, sc, sc, 400), 0.45)) return;
+    done = true;
+    if (!st.add(tpl, x, y, -(s - ctx.s0), R, sc, sc, sc, 1, 1, 1, 0.8 + rng() * 0.5)) return;
     const it = st.last;
     it.g = 1;
     gnd.addSupport(it, s);
     gnd.occupy(x, s, tpl.r * sc * 0.6, 0);
     const m = tpl.ledge, wx = x + (R[0] * m.x + R[2] * m.z) * sc, ws = s - (R[6] * m.x + R[8] * m.z) * sc;
     poi(ctx, 'ledge', wx, y + m.y * sc, ws, 2.5 * sc);
-    return it;
-  }
-  return null;
+  });
+  return out;
 }
 
 // second layout chain: floor micro detail + small life (incl. under the camera), drawn near only
@@ -449,17 +460,14 @@ export function layoutReefMicro(ctx) {
   if (presence(ctx, 'reef') <= 0) return null;
   const R = specs(), rng = mulberry32((ctx.s0 * 2654435761) ^ 0x51f), fs = floorSampler(ctx), bk = budgetK(ctx, 'reef'), tk = tierK(ctx);
   const st = new Batch(MAT.static, 24000 * bk * tk, 'near'), sw = new Batch(MAT.sway, 8000 * bk * tk, 'near');
-  microDetail(ctx, fs, st, rng, 'reef', R.micro, 130, 26);
-  // small life everywhere, also under the camera (next stage)
-  const life = () => {
-    const nextP = clusterer(ctx, rng, 0, 14, 1);
-    for (let k = 0; k < 90 * tk; k++) {
-      const p = nextP();
-      if (!p) continue;
-      if (rng() > ctx.weightOf(p.s, 'reef') * 0.8) continue;
-      const e = pickW(rng, R.smallList);
-      putFloor(ctx, fs, e.sway ? sw : st, R[e.k], p.x, p.s, rng, 0.8);
-    }
-  };
-  return { batches: [st, sw], more: [life] };
+  const more = microSteps(ctx, fs, st, rng, 'reef', R.micro, 130, 26, 26);
+  // small life everywhere, also under the camera
+  const nextP = clusterer(ctx, rng, 0, 14, 1);
+  more.push(...steps(Math.round(90 * tk), 23, () => {
+    const p = nextP();
+    if (!p || rng() > ctx.weightOf(p.s, 'reef') * 0.8) return;
+    const e = pickW(rng, R.smallList);
+    putFloor(ctx, fs, e.sway ? sw : st, R[e.k], p.x, p.s, rng, 0.8);
+  }));
+  return { batches: [st, sw], more };
 }

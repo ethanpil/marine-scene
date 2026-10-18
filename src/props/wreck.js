@@ -4,7 +4,7 @@
 // and built in the chunk that contains their largest s.
 import { Builder, Batch, T, TAU, TUBE, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, placedPoints, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots, vary, tierK, poi } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer, groundY } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer, groundY, microSteps, steps } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -460,6 +460,7 @@ function placePiece(ctx, fl, P, tpl, s, off, yaw, roll, sinkK, step = 1.6) {
     const fA = fl.at(x - bx * 12, s - bs * 12), fB = fl.at(x + bx * 12, s + bs * 12);
     const R = mul3(rotY(yaw), mul3(rotX(Math.atan2(fB - fA, 24) * 0.8), rotZ(roll)));
     const y = groundY(fl, x, s, tpl, R, 1, 1, 1) - sinkK;
+    if (!clearT(P, placedPoints(tpl, x, y, s, R, 1, 1, 1, 150), 0.6)) continue; // cheap reject first
     const pts = placedPoints(tpl, x, y, s, R, 1, 1, 1, 600);
     if (clearT(P, pts, 0.6)) {
       let sMax = -1e9, sMin = 1e9;
@@ -607,65 +608,64 @@ export function layoutWreck(ctx) {
   const ships = new Batch(MAT.static, 90000), st = new Batch(MAT.static, 16000 * bk);      // hulls; big pieces, delights
   const mid = new Batch(MAT.static, 34000 * bk * tk, 'mid'), sw = new Batch(MAT.sway, 8000 * bk * tk, 'mid'); // debris field
   const near = new Batch(MAT.static, 12000 * bk * tk, 'near');                               // floor micro detail
-  const idx = Math.floor(ctx.s0 / 64), inChunk = (s) => s >= ctx.s0 && s < ctx.s1;
-  const close = [];
+  const idx = Math.floor(ctx.s0 / 64), inChunk = (s) => s >= ctx.s0 && s < ctx.s1, more = [];
+  const extra = (sl, e) => () => {
+    if (e.type === 'chest') {
+      if (putFloor(ctx, fs, st, sp.chest, e.x, e.s, rng)) {
+        const it = st.last, yaw = Math.atan2(it.R[2], it.R[0]), f = it.tpl.front * it.sx + 0.05;
+        putFloor(ctx, fs, st, { ...sp.coins, yaw, yawJ: 0.2 }, e.x + it.R[2] * f, e.s - it.R[8] * f, rng); // gold spilling out of the front
+        poi(ctx, 'treasure', e.x, fs.at(e.x, e.s) + 0.4, e.s, 2, { wreck: sl.name });
+      }
+    } else if (e.type === 'bell') {
+      if (putFloor(ctx, fs, st, sp.bell, e.x, e.s, rng)) st.last.lbl = "Ship's bell of the " + sl.short;
+    } else { // container, sometimes with a shorter one stacked on top (same yaw, inside its roof)
+      const cr = mulberry32(e.k), long = T.container.filter((t) => t.box[3] - t.box[0] > 10), short = T.container.filter((t) => t.box[3] - t.box[0] < 10);
+      const stack = e.stack && long.length && short.length, base = stack ? long[(cr() * long.length) | 0] : T.container[(cr() * T.container.length) | 0], yaw = cr() * TAU;
+      if (!putFloor(ctx, fs, st, { ...sp.container, tpl: base, yaw, yawJ: 0 }, e.x, e.s, cr) || !stack) return;
+      const o = (cr() - 0.5) * 4, it = st.last; // along the long axis (template x)
+      putFloor(ctx, fs, st, { ...sp.container, tpl: short[(cr() * short.length) | 0], yaw, yawJ: 0.02, occ: 0 }, it.x + Math.cos(yaw) * o, e.s + Math.sin(yaw) * o, cr);
+    }
+  };
   for (const seg of ctx.segments) {
     if (seg.key !== 'wreck') continue;
     const plan = segmentPlan(ctx, seg);
     for (const sl of plan.slots) {
       if (sl.s < ctx.s0 - 100 || sl.s > ctx.s1 + 100) continue;
-      for (const p of slotPieces(ctx, fs, sl)) {
-        if (Math.floor(p.sMax / 64) === idx && ships.add(p.tpl, p.x, p.y, -(p.s - ctx.s0), p.R, 1, 1, 1, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 1)) {
-          const it = ships.last;
-          it.g = 1; it.lbl = p.lbl; it.fact = sl.fact;
-          poi(ctx, 'wreck', p.c[0], p.c[1], p.c[2], p.r, { name: p.lbl, kind: sl.kind, community: plan.comm.name });
-        }
-        if (p.sMax > ctx.s0 - 40 && p.sMin < ctx.s1 + 40) close.push([p, sl]);
-      }
-      if (sl.arch && inChunk(sl.arch.s)) poi(ctx, 'arch', sl.arch.x, sl.arch.y, sl.arch.s, TUBE + 1.2, { kind: 'hull gap', name: sl.name });
-      if (sl.cargo && inChunk(sl.cargo.s)) poi(ctx, 'wreck', sl.cargo.x, fs.at(sl.cargo.x, sl.cargo.s) + 2, sl.cargo.s, 16, { name: sl.name, kind: 'containers' });
-      for (const e of sl.extras) {
-        if (!inChunk(e.s)) continue;
-        if (e.type === 'chest') {
-          if (putFloor(ctx, fs, st, sp.chest, e.x, e.s, rng)) {
-            const it = st.last, yaw = Math.atan2(it.R[2], it.R[0]), f = it.tpl.front * it.sx + 0.05;
-            putFloor(ctx, fs, st, { ...sp.coins, yaw, yawJ: 0.2 }, e.x + it.R[2] * f, e.s - it.R[8] * f, rng); // gold spilling out of the front
-            poi(ctx, 'treasure', e.x, fs.at(e.x, e.s) + 0.4, e.s, 2, { wreck: sl.name });
+      // one step places the slot's pieces (once per slot, cached) and adds the hulls this chunk owns; its
+      // delights and debris become the following steps
+      more.push(() => {
+        const next = [];
+        for (const p of slotPieces(ctx, fs, sl)) {
+          if (Math.floor(p.sMax / 64) === idx && ships.add(p.tpl, p.x, p.y, -(p.s - ctx.s0), p.R, 1, 1, 1, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 0.9 + rng() * 0.2, 1)) {
+            const it = ships.last;
+            it.g = 1; it.lbl = p.lbl; it.fact = sl.fact;
+            poi(ctx, 'wreck', p.c[0], p.c[1], p.c[2], p.r, { name: p.lbl, kind: sl.kind, community: plan.comm.name });
           }
-        } else if (e.type === 'bell') {
-          if (putFloor(ctx, fs, st, sp.bell, e.x, e.s, rng)) st.last.lbl = "Ship's bell of the " + sl.short;
-        } else { // container, sometimes with a shorter one stacked on top (same yaw, inside its roof)
-          const cr = mulberry32(e.k), long = T.container.filter((t) => t.box[3] - t.box[0] > 10), short = T.container.filter((t) => t.box[3] - t.box[0] < 10);
-          const stack = e.stack && long.length && short.length, base = stack ? long[(cr() * long.length) | 0] : T.container[(cr() * T.container.length) | 0], yaw = cr() * TAU;
-          if (!putFloor(ctx, fs, st, { ...sp.container, tpl: base, yaw, yawJ: 0 }, e.x, e.s, cr) || !stack) continue;
-          const o = (cr() - 0.5) * 4, it = st.last; // along the long axis (template x)
-          putFloor(ctx, fs, st, { ...sp.container, tpl: short[(cr() * short.length) | 0], yaw, yawJ: 0.02, occ: 0 }, it.x + Math.cos(yaw) * o, e.s + Math.sin(yaw) * o, cr);
+          if (p.sMax > ctx.s0 - 40 && p.sMin < ctx.s1 + 40) { // debris field around it (only the part inside this chunk)
+            const list = sl.hull === 'wood' ? sp.wood : sp.steel;
+            next.push(...steps(Math.round(40 * tk), 20, () => {
+              const a = rng() * TAU, r = 4 + Math.pow(rng(), 1.5) * 26, s = p.s + Math.sin(a) * r * 1.3, x = p.x + Math.cos(a) * r;
+              if (!inChunk(s)) return;
+              const e = pickW(rng, list);
+              putFloor(ctx, fs, e.sway ? sw : mid, sp[e.k], x, s, rng);
+            }));
+          }
         }
-      }
+        if (sl.arch && inChunk(sl.arch.s)) poi(ctx, 'arch', sl.arch.x, sl.arch.y, sl.arch.s, TUBE + 1.2, { kind: 'hull gap', name: sl.name });
+        if (sl.cargo && inChunk(sl.cargo.s)) poi(ctx, 'wreck', sl.cargo.x, fs.at(sl.cargo.x, sl.cargo.s) + 2, sl.cargo.s, 16, { name: sl.name, kind: 'containers' });
+        for (const e of sl.extras) if (inChunk(e.s)) next.push(extra(sl, e));
+        more.unshift(...next);
+      });
     }
   }
-  const more = [];
-  // debris fields around nearby wrecks (only the part inside this chunk)
-  more.push(() => { for (const [p, sl] of close) {
-    const list = sl.hull === 'wood' ? sp.wood : sp.steel;
-    for (let k = 0; k < 40 * tk; k++) {
-      const a = rng() * TAU, r = 4 + Math.pow(rng(), 1.5) * 26, s = p.s + Math.sin(a) * r * 1.3, x = p.x + Math.cos(a) * r;
-      if (!inChunk(s)) continue;
-      const e = pickW(rng, list);
-      putFloor(ctx, fs, e.sway ? sw : mid, sp[e.k], x, s, rng);
-    }
-  } });
-  more.push(() => {
-    const nextP551 = clusterer(ctx, rng, 0, 45, 1);
-    for (let k = 0; k < 60 * tk; k++) {
-      const p = nextP551();
-      if (!p) continue;
-      if (rng() > ctx.weightOf(p.s, 'wreck')) continue;
-      const e = pickW(rng, sp.sparse);
-      putFloor(ctx, fs, e.sway ? sw : mid, sp[e.k], p.x, p.s, rng, 1 + sstep(5, 30, p.d));
-    }
-    for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'wreck') * 0.5) putBend(ctx, fs, st, rng() < 0.6 ? sp.mast : sp.rock, b, rng);
-  });
-  more.push(() => microDetail(ctx, fs, near, rng, 'wreck', sp.micro, 90, 26));
+  const nextP551 = clusterer(ctx, rng, 0, 45, 1);
+  more.push(...steps(Math.round(60 * tk), 20, () => {
+    const p = nextP551();
+    if (!p || rng() > ctx.weightOf(p.s, 'wreck')) return;
+    const e = pickW(rng, sp.sparse);
+    putFloor(ctx, fs, e.sway ? sw : mid, sp[e.k], p.x, p.s, rng, 1 + sstep(5, 30, p.d));
+  }));
+  more.push(() => { for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'wreck') * 0.5) putBend(ctx, fs, st, rng() < 0.6 ? sp.mast : sp.rock, b, rng); });
+  more.push(...microSteps(ctx, fs, near, rng, 'wreck', sp.micro, 90, 26, 30));
   return { batches: [ships, st, mid, sw, near], more };
 }

@@ -2,7 +2,7 @@
 // and spread into a floating canopy. Sway (style 1) grows with height so bases stay anchored.
 import { Builder, Batch, T, TAU, vn3, sat, sstep, lerp, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, LENS, rotY, tierK, poi } from './core.js';
 import { grassPatch } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer, groundY } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, microSteps, steps, clusterer, groundY } from './scatter.js';
 import { placeArch, placeLedge } from './reef.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
@@ -185,13 +185,13 @@ export function layoutKelp(ctx) {
   const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), comm = community(ctx), tk = tierK(ctx);
   const bk = budgetK(ctx, 'kelp');
   const kb = new Batch(MAT.sway, 120000 * bk, 'mid'), st = new Batch(MAT.static, 26000 * bk);
-  const idx = Math.floor(ctx.s0 / 64), clears = [];
+  const idx = Math.floor(ctx.s0 / 64), clears = [], more = [];
   // set pieces first, so holdfasts can grip them
   for (const seg of ctx.segments) {
     if (seg.key !== 'kelp') continue;
     const S = kelpSet(ctx, seg);
     clears.push(S.clear);
-    for (const a of S.arches) if (Math.floor((a.s + 3) / 64) === idx) placeArch(ctx, fs, st, null, mulberry32(a.k), a.s, T.arch);
+    for (const a of S.arches) if (Math.floor((a.s + 3) / 64) === idx) more.push(() => placeArch(ctx, fs, st, null, mulberry32(a.k), a.s, T.arch));
     if (S.clear.s >= ctx.s0 && S.clear.s < ctx.s1) {
       const c = S.clear, y = fs.at(c.x, c.s);
       poi(ctx, 'kelp-clearing', c.x, y + 4, c.s, c.r, { community: comm.name });
@@ -200,10 +200,12 @@ export function layoutKelp(ctx) {
   }
   for (const b of bendSpots(ctx)) {
     if (rng() > ctx.weightOf(b.s, 'kelp') * 0.8) continue;
-    const x = putBend(ctx, fs, st, sp.bendRock, b, rng);
-    if (x !== null) for (let j = 0; j < 4; j++) putFloor(ctx, fs, st, sp.rock, x + (rng() - 0.5) * 6, b.s + (rng() - 0.5) * 6, rng, 0.7);
+    more.push(() => {
+      const x = putBend(ctx, fs, st, sp.bendRock, b, rng);
+      if (x !== null) for (let j = 0; j < 4; j++) putFloor(ctx, fs, st, sp.rock, x + (rng() - 0.5) * 6, b.s + (rng() - 0.5) * 6, rng, 0.7);
+    });
   }
-  if (rng() < 0.4) placeLedge(ctx, fs, st, rng, T.ledge);
+  if (rng() < 0.4) more.push(...placeLedge(ctx, fs, st, rng, T.ledge));
   const plants = [];
   const nextP = clusterer(ctx, rng, 0, 45, 1.3);
   for (let k = 0; k < 210 * comm.plants * tk; k++) {
@@ -232,9 +234,9 @@ export function layoutKelp(ctx) {
     kb.last.g = 1;
     if (!lod && rng() < 0.4) putFloor(ctx, fs, st, sp.rock, p.x + (rng() - 0.5) * 2, p.s + (rng() - 0.5) * 2, rng, 0.6);
   } };
-  // plants in two stages: nearest half first
-  const h = Math.ceil(plants.length / 2);
-  return { batches: [st, kb], more: [() => grow(plants.slice(0, h)), () => grow(plants.slice(h))] };
+  // plants a few per step, nearest first
+  for (let q = 0; q < plants.length; q += 4) { const part = plants.slice(q, q + 4); more.push(() => grow(part)); }
+  return { batches: [st, kb], more };
 }
 
 // second chain: floor micro detail and understory life (near), small rocks (mid)
@@ -242,17 +244,14 @@ export function layoutKelpFloor(ctx) {
   if (presence(ctx, 'kelp') <= 0) return null;
   const sp = specs(), rng = mulberry32((ctx.s0 * 2246822519) ^ 0x6b3), fs = floorSampler(ctx), bk = budgetK(ctx, 'kelp'), tk = tierK(ctx), comm = community(ctx);
   const st = new Batch(MAT.static, 26000 * bk * tk, 'near'), sw = new Batch(MAT.sway, 14000 * bk * tk, 'near'), mid = new Batch(MAT.static, 12000 * bk * tk, 'mid');
-  microDetail(ctx, fs, st, rng, 'kelp', sp.micro, 150, 28);
+  const more = microSteps(ctx, fs, st, rng, 'kelp', sp.micro, 150, 28, 25);
   const list = comm.urchins ? sp.barrenList : comm.palms ? sp.palmList : sp.floorList;
   const nextP = clusterer(ctx, rng, 0, 36, 1.3, comm.urchins ? { r: [1.5, 6], n: [6, 20], single: 0.05 } : undefined);
-  const life = () => {
-    for (let k = 0; k < 75 * tk * comm.floor; k++) {
-      const p = nextP();
-      if (!p) continue;
-      if (rng() > ctx.weightOf(p.s, 'kelp')) continue;
-      const e = pickW(rng, list);
-      putFloor(ctx, fs, e.k === 'rock' || e.k === 'boulder' ? mid : e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 0.8 + sstep(4, 30, p.d) * 0.6);
-    }
-  };
-  return { batches: [mid, st, sw], more: [life, life] };
+  more.push(...steps(Math.round(150 * tk * comm.floor), 22, () => {
+    const p = nextP();
+    if (!p || rng() > ctx.weightOf(p.s, 'kelp')) return;
+    const e = pickW(rng, list);
+    putFloor(ctx, fs, e.k === 'rock' || e.k === 'boulder' ? mid : e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 0.8 + sstep(4, 30, p.d) * 0.6);
+  }));
+  return { batches: [mid, st, sw], more };
 }

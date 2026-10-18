@@ -1,8 +1,8 @@
 // Polar sea ice: rubble keels and icebergs hanging from the ice ceiling, brinicles, and sparse benthos
 // on the far floor. Ice uses the static material's translucent ice mode (5).
-import { Builder, Batch, T, TAU, sat, sstep, vn3, fbm3, floorSampler, presence, tubeClear, pointsClear, placedPoints, rotY, rotX, rotZ, mul3, budgetK, bendSpots, vary, tierK, poi } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, vn3, fbm3, floorSampler, presence, tubeClear, pointsClear, placedPoints, rotY, rotX, rotZ, mul3, budgetK, bendSpots, vary, tierK, poi, ceilSampler } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, bendX, clusterer, ceilY, hangAt } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, bendX, clusterer, ceilY, hangAt, steps } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -116,7 +116,7 @@ function segmentBergs(ctx, seg) {
 
 export function layoutPolar(ctx) {
   if (presence(ctx, 'polar') <= 0) return null;
-  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), comm = community(ctx), bk = budgetK(ctx, 'polar'), tk = tierK(ctx);
+  const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx), cs = ceilSampler(ctx), comm = community(ctx), bk = budgetK(ctx, 'polar'), tk = tierK(ctx);
   const st = new Batch(MAT.static, 60000 * bk);                                                     // keels, bergs
   const mid = new Batch(MAT.static, 16000 * bk * tk, 'mid'), sw = new Batch(MAT.sway, 12000 * bk * tk, 'mid'); // brinicles, benthos
   const idx = Math.floor(ctx.s0 / 64);
@@ -130,33 +130,32 @@ export function layoutPolar(ctx) {
   }
   // keels under the ice (not in open leads); some on the outside of bends, dead ahead
   const keels = comm.keels(), keelSpots = bendSpots(ctx).map((b) => ({ s: b.s, x: bendX(ctx, b, 5.5, rng, 1.5) }));
-  for (let k = 0; k < comm.n + keelSpots.length; k++) {
+  const more = steps(comm.n + keelSpots.length, 1, (k) => {
     const p = k < keelSpots.length ? keelSpots[k] : spot(ctx, rng, 6, 45, 0.9);
-    if (rng() > ctx.weightOf(p.s, 'polar')) continue;
-    if (ctx.ceilingAt(p.x, p.s) > ctx.surfaceY - 0.4) continue;
+    if (rng() > ctx.weightOf(p.s, 'polar')) return;
+    if (cs.at(p.x, p.s) > ctx.surfaceY - 0.4) return;
     const tpl = rng.pick(keels), sc = 0.7 + rng() * 0.7, sy = sc * (0.8 + rng() * 0.6), R = rotY(rng() * TAU);
     const y = ceilY(ctx, p.x, p.s, tpl, R, sc, sy, sc) + 0.3;
-    if (!pointsClear(ctx, placedPoints(tpl, p.x, y, p.s, R, sc, sy, sc, 2000), 0.6)) continue;
+    if (!pointsClear(ctx, placedPoints(tpl, p.x, y, p.s, R, sc, sy, sc, 800), 0.6)) return;
     if (st.add(tpl, p.x, y, -(p.s - ctx.s0), R, sc, sy, sc, 1, 1, 1, 1)) st.last.hang = 1;
-  }
+  });
   // brinicles: brine icicles growing down from the ice
-  for (let k = 0; k < 14 * comm.brinicles * tk; k++) {
+  more.push(...steps(Math.round(14 * comm.brinicles * tk), 8, () => {
     const p = spot(ctx, rng, 5, 35, 1);
-    if (rng() > ctx.weightOf(p.s, 'polar')) continue;
-    const c = ctx.ceilingAt(p.x, p.s);
-    if (c > ctx.surfaceY - 0.4) continue;
+    if (rng() > ctx.weightOf(p.s, 'polar')) return;
+    const c = cs.at(p.x, p.s);
+    if (c > ctx.surfaceY - 0.4) return;
     const L = 1 + rng() * 4, w = 1 + rng() * 0.6;
-    if (!tubeClear(ctx, p.x, p.s, c - L, c, 0.2)) continue;
+    if (!tubeClear(ctx, p.x, p.s, c - L, c, 0.2)) return;
     hangAt(ctx, mid, rng.pick(T.brinicle), p.x, p.s, rotY(rng() * TAU), w, L, w, [1, 1, 1], 1, 0.1);
-  }
+  }));
   // benthos far below
   const nextP136 = clusterer(ctx, rng, 0, 40, 1);
-  for (let k = 0; k < 45 * tk; k++) {
+  more.push(...steps(Math.round(45 * tk), 15, () => {
     const p = nextP136();
-    if (!p) continue;
-    if (rng() > ctx.weightOf(p.s, 'polar')) continue;
+    if (!p || rng() > ctx.weightOf(p.s, 'polar')) return;
     const e = pickW(rng, sp.list);
     putFloor(ctx, fs, e.sway ? sw : mid, sp[e.k], p.x, p.s, rng);
-  }
-  return { batches: [st, mid, sw] };
+  }));
+  return { batches: [st, mid, sw], more };
 }

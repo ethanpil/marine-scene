@@ -2,7 +2,7 @@
 // from noise, plus shells, sea cucumbers, scallops, sand dollars, cushion stars and rocks.
 import { Builder, Batch, Inst, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, vary, tierK, LENS } from './core.js';
 import { grassPatch, seastar } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, putBend, microDetail, clusterer, groundY } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail, microSteps, steps, clusterer, groundY } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -149,33 +149,32 @@ export function layoutGrassNear(ctx) {
   const A = mk(), B = mk();
   if (ctx.addLabel) for (let k = 0; k < 6; k++) { const s = ctx.s0 + rng() * 64, x = ctx.pathX(s) + (rng() - 0.5) * 16; ctx.addLabel(comm.label, x, fs.at(x, s) + 0.35, s, comm.fact); }
   const h = ctx.s0 + 32;
-  const q = (I, a, b) => () => grassField(ctx, fs, I, rng, 0, 14, 1.0, comm, a, b);
-  return { extra: [...A, ...B], batches: [], more: [q(A, ctx.s0, ctx.s0 + 16), q(A, ctx.s0 + 16, h), q(B, h, ctx.s0 + 48), q(B, ctx.s0 + 48, ctx.s1)] };
+  const more = [];
+  for (let k = 0; k < 32; k++) { const a = ctx.s0 + k * 2, I = a < h ? A : B; more.push(() => grassField(ctx, fs, I, rng, 0, 14, 1.0, comm, a, a + 2)); }
+  return { extra: [...A, ...B], batches: [], more };
 }
 export function layoutGrassFar(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
   const fs = floorSampler(ctx), rng = ctx.rng, comm = community(ctx);
   const insts = comm.far().map((t) => new Inst(t, MAT.sway, Math.round(320 * budgetK(ctx, 'seagrass')), 'mid'));
-  const h = ctx.s0 + 32.4;
-  const q = (a, b) => () => grassField(ctx, fs, insts, rng, 14, 40, 1.8, comm, a, b);
-  return { extra: insts, batches: [], more: [q(ctx.s0, ctx.s0 + 16.2), q(ctx.s0 + 16.2, h), q(h, ctx.s0 + 48.6), q(ctx.s0 + 48.6, ctx.s1)] };
+  const more = [];
+  for (let k = 0; k < 18; k++) { const a = ctx.s0 + k * 3.6, b = k === 17 ? ctx.s1 : a + 3.6; more.push(() => grassField(ctx, fs, insts, rng, 14, 40, 1.8, comm, a, b)); }
+  return { extra: insts, batches: [], more };
 }
 export function layoutSeagrassMisc(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
   const sp = specs(), fs = floorSampler(ctx), rng = ctx.rng, tk = tierK(ctx), bk = budgetK(ctx, 'seagrass');
   const st = new Batch(MAT.static, 8000 * bk), mid = new Batch(MAT.static, 10000 * bk * tk, 'mid'), near = new Batch(MAT.static, 12000 * bk * tk, 'near');
-  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'seagrass') * 0.7) putBend(ctx, fs, st, sp.bendRock, b, rng);
+  const more = [];
+  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'seagrass') * 0.7) more.push(() => putBend(ctx, fs, st, sp.bendRock, b, rng));
+  more.push(...microSteps(ctx, fs, near, rng, 'seagrass', sp.micro, 70, 26, 25));
   const nextP148 = clusterer(ctx, rng, 0, 30, 1.2);
-  const life = () => {
-    for (let k = 0; k < 55 * tk; k++) {
-      const p = nextP148();
-      if (!p) continue;
-      if (rng() > ctx.weightOf(p.s, 'seagrass')) continue;
-      const e = pickW(rng, sp.list);
-      putFloor(ctx, fs, e.k === 'rock' ? mid : near, sp[e.k], p.x, p.s, rng);
-    }
-  };
-  const more = [() => microDetail(ctx, fs, near, rng, 'seagrass', sp.micro, 70, 26), life, life];
+  more.push(...steps(Math.round(110 * tk), 22, () => {
+    const p = nextP148();
+    if (!p || rng() > ctx.weightOf(p.s, 'seagrass')) return;
+    const e = pickW(rng, sp.list);
+    putFloor(ctx, fs, e.k === 'rock' ? mid : near, sp[e.k], p.x, p.s, rng);
+  }));
   // rare delight: a message in a bottle, half buried in a sandy gap
   if (rng() < 0.06) {
     for (let t = 0; t < 12; t++) {

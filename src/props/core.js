@@ -364,15 +364,68 @@ export class Template {
     }
     return (this._rb = { x0, z0, cs, n, cells });
   }
-  // obstacle capsules: explicit, or one capsule fitted to the bounding box
+  // obstacle capsules: explicit, or one capsule fitted to the bounding box (kept for other callers;
+  // registerItems() uses explicit ones or capsules() fitted at the item's real scale)
   obstacles() {
     if (this.obs) return this.obs;
+    if (this._obsBox) return this._obsBox;
     const [x0, y0, z0, x1, y1, z1] = this.box;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2, hx = (x1 - x0) / 2, hy = (y1 - y0) / 2, hz = (z1 - z0) / 2;
-    if (hy >= Math.max(hx, hz)) { const r = Math.max(hx, hz); this.obs = [[cx, y0 + r * 0.8, cz, cx, Math.max(y0 + r * 0.8, y1 - r * 0.8), cz, r]]; }
-    else if (hx >= hz) { const r = Math.max(hy, hz); this.obs = [[x0 + r * 0.8, cy, cz, Math.max(x0 + r * 0.8, x1 - r * 0.8), cy, cz, r]]; }
-    else { const r = Math.max(hy, hx); this.obs = [[cx, cy, z0 + r * 0.8, cx, cy, Math.max(z0 + r * 0.8, z1 - r * 0.8), r]]; }
-    return this.obs;
+    if (hy >= Math.max(hx, hz)) { const r = Math.max(hx, hz); this._obsBox = [[cx, y0 + r * 0.8, cz, cx, Math.max(y0 + r * 0.8, y1 - r * 0.8), cz, r]]; }
+    else if (hx >= hz) { const r = Math.max(hy, hz); this._obsBox = [[x0 + r * 0.8, cy, cz, Math.max(x0 + r * 0.8, x1 - r * 0.8), cy, cz, r]]; }
+    else { const r = Math.max(hy, hx); this._obsBox = [[cx, cy, z0 + r * 0.8, cx, cy, Math.max(z0 + r * 0.8, z1 - r * 0.8), r]]; }
+    return this._obsBox;
+  }
+  // Obstacle capsules fitted to the mesh for an item scaled (1, ry, rz) relative to its x scale: a chain
+  // along the longest axis for roundish cross-sections, parallel rows for flat shapes; every vertex lies
+  // inside a capsule. Cached per half-octave scale class (ordinary +-15% jitter shares one fit; the caller
+  // scales the radius by the leftover ratio). Returns { list: [[ax,ay,az,bx,by,bz,r]], fy, fz }
+  // in that normalised space (multiply by the item's x scale, correct y/z by ry/fy, rz/fz).
+  capsules(ry, rz, maxK = 6) {
+    const qy = Math.round(Math.log2(ry) * 2), qz = Math.round(Math.log2(rz) * 2), key = (qy * 1000 + qz) * 8 + maxK;
+    const cache = this._caps || (this._caps = new Map());
+    let out = cache.get(key);
+    if (out) return out;
+    // at most ~700 vertices (evenly strided) take part in the fit; the radius gets a small margin for the rest
+    const fy = 2 ** (qy / 2), fz = 2 ** (qz / 2), P = this.pos, stp = Math.max(1, Math.ceil(this.vc / 700)), n = Math.ceil(this.vc / stp), X = new Float32Array(n * 3);
+    const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+    for (let i = 0; i < n; i++) {
+      const v = i * stp;
+      X[i * 3] = P[v * 3]; X[i * 3 + 1] = P[v * 3 + 1] * fy; X[i * 3 + 2] = P[v * 3 + 2] * fz;
+      for (let a = 0; a < 3; a++) { const v = X[i * 3 + a]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
+    }
+    const ext = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]], ord = [0, 1, 2].sort((a, b) => ext[b] - ext[a]);
+    const a1 = ord[0], a2 = ord[1], a3 = ord[2], L = ext[a1], M = ext[a2], S = Math.max(ext[a3], 0.05);
+    const flat = M > 1.6 * S;
+    // groups: slices along the long axis (roundish) or strips across the middle axis (flat)
+    const k = L < 0.6 || maxK === 1 ? 1 : flat ? Math.max(2, Math.min(maxK, Math.ceil(M / (2.2 * S)))) : Math.max(1, Math.min(maxK, Math.round(L / (1.5 * Math.max(M, 0.05)))));
+    const ga = flat ? a2 : a1, gw = ext[ga] / k, list = [];
+    for (let j = 0; j < k; j++) {
+      const ja = lo[ga] + (j - 0.05) * gw, jb = lo[ga] + (j + 1.05) * gw;
+      let c2 = 0, c3 = 0, m = 0, u0 = 1e9, u1 = -1e9;
+      for (let i = 0; i < n; i++) {
+        const g = X[i * 3 + ga]; if (g < ja || g > jb) continue;
+        c2 += X[i * 3 + a2]; c3 += X[i * 3 + a3]; m++;
+        const u = X[i * 3 + a1]; if (u < u0) u0 = u; if (u > u1) u1 = u;
+      }
+      if (!m) continue;
+      c2 /= m; c3 /= m;
+      let rp = 0;
+      for (let i = 0; i < n; i++) { const g = X[i * 3 + ga]; if (g >= ja && g <= jb) rp = Math.max(rp, Math.hypot(X[i * 3 + a2] - c2, X[i * 3 + a3] - c3)); }
+      const inset = Math.min(rp * 0.6, (u1 - u0) / 2), e0 = u0 + inset, e1 = u1 - inset;
+      let r = 0; // exact containment: farthest group vertex from the segment
+      for (let i = 0; i < n; i++) {
+        const g = X[i * 3 + ga]; if (g < ja || g > jb) continue;
+        const u = X[i * 3 + a1], du = u < e0 ? e0 - u : u > e1 ? u - e1 : 0;
+        r = Math.max(r, Math.hypot(du, X[i * 3 + a2] - c2, X[i * 3 + a3] - c3));
+      }
+      const A = [0, 0, 0], B = [0, 0, 0];
+      A[a1] = e0; B[a1] = e1; A[a2] = B[a2] = c2; A[a3] = B[a3] = c3;
+      list.push([A[0], A[1], A[2], B[0], B[1], B[2], stp > 1 ? r * 1.04 : r]);
+    }
+    out = { list, fy, fz };
+    cache.set(key, out);
+    return out;
   }
   // shared BufferGeometry for instancing (never disposed)
   geometry() {
@@ -525,29 +578,37 @@ export function releaseAfterUpload(g) {
 // ---------- Instanced helper (shared template geometry, per-chunk instance buffers) ----------
 export class Inst {
   constructor(tpl, material, max, lod = null) {
-    this.tpl = tpl; this.mat = material; this.max = max; this.m = []; this.c = []; this.lod = lod;
+    this.tpl = tpl; this.mat = material; this.max = max; this.n = 0; this.lod = lod;
+    this.m = null; this.c = null; // typed buffers, allocated on the first add (no array growth, little garbage)
     this.items = typeof window !== 'undefined' && (window.__propsAudit || window.__propsGapCheck) ? [] : null; // debug: contact audit
   }
-  get count() { return this.m.length / 16; }
-  get tris() { return this.count * this.tpl.tris; }
+  get count() { return this.n; }
+  get tris() { return this.n * this.tpl.tris; }
   add(x, y, z, R, sx, sy = sx, sz = sx, r = 1, g = 1, b = 1) {
-    if (this.count >= this.max) return false;
+    if (this.n >= this.max) return false;
+    if (!this.m) { this.m = new Float32Array(this.max * 16); this.c = new Float32Array(this.max * 3); }
     // column-major 4x4 for InstancedMesh
-    this.m.push(R[0] * sx, R[3] * sx, R[6] * sx, 0, R[1] * sy, R[4] * sy, R[7] * sy, 0, R[2] * sz, R[5] * sz, R[8] * sz, 0, x, y, z, 1);
-    this.c.push(r, g, b);
+    const M = this.m, o = this.n * 16, oc = this.n * 3;
+    M[o] = R[0] * sx; M[o + 1] = R[3] * sx; M[o + 2] = R[6] * sx; M[o + 3] = 0;
+    M[o + 4] = R[1] * sy; M[o + 5] = R[4] * sy; M[o + 6] = R[7] * sy; M[o + 7] = 0;
+    M[o + 8] = R[2] * sz; M[o + 9] = R[5] * sz; M[o + 10] = R[8] * sz; M[o + 11] = 0;
+    M[o + 12] = x; M[o + 13] = y; M[o + 14] = z; M[o + 15] = 1;
+    this.c[oc] = r; this.c[oc + 1] = g; this.c[oc + 2] = b;
+    this.n++;
     if (this.items) this.items.push({ tpl: this.tpl, x, y, z, R, sx, sy, sz, g: 1 });
     return true;
   }
   build() {
-    const n = this.count;
+    const n = this.n;
     if (!n) return null;
     const im = new THREE.InstancedMesh(this.tpl.geometry(), this.mat, n);
-    im.instanceMatrix.array.set(this.m);
-    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.c), 3);
+    im.instanceMatrix.array.set(this.m.subarray(0, n * 16));
+    im.instanceColor = new THREE.InstancedBufferAttribute(this.c.slice(0, n * 3), 3);
     im.computeBoundingSphere();
     im.boundingSphere.radius += 1;
     im.matrixAutoUpdate = false;
     if (this.lod) im.userData.lod = this.lod;
+    this.m = this.c = null;
     return im;
   }
 }
@@ -558,6 +619,14 @@ const grounds = new WeakMap();
 // Per-chunk ground: floor mesh + every registered support prop (rocks, mounds, steps, arches...).
 // Same API as before (at(x, s) + nx/ny/nz), so existing callers now land on supports too.
 export function floorSampler(ctx) { return groundOf(ctx); }
+// Ceiling mesh sampler for the chunk (same lattice and triangle split as the rendered ceiling), cached:
+// node heights are fetched once, so ceiling-hung props cost a few lookups instead of exact evaluations.
+const ceils = new WeakMap();
+export function ceilSampler(ctx) {
+  let c = ceils.get(ctx.group);
+  if (!c) { c = new FloorSampler(ctx, (x, s) => ctx.ceilingAt(x, s)); ceils.set(ctx.group, c); }
+  return c;
+}
 export function groundOf(ctx) {
   let g = grounds.get(ctx.group);
   if (!g) { g = new Ground(ctx); grounds.set(ctx.group, g); }
@@ -649,18 +718,19 @@ export class Ground {
   }
 }
 export class FloorSampler {
-  constructor(ctx) {
-    this.ctx = ctx; this.s0 = ctx.s0;
+  // sample(x, s): the surface whose mesh lattice this reproduces (the floor by default; also used for ceilings)
+  constructor(ctx, sample = null) {
+    this.ctx = ctx; this.s0 = ctx.s0; this.sample = sample || ((x, s) => ctx.floorAt(x, s));
     this.k0 = Math.round(ctx.xMin / DXG);
     this.W = Math.round((ctx.xMax - ctx.xMin) / DXG) + 1;
     this.h = new Float32Array(this.W * NZG).fill(NaN);
     this.nx = 0; this.ny = 1; this.nz = 0;
   }
   node(i, j) {
-    if (i < 0 || j < 0 || i >= this.W || j >= NZG) return this.ctx.floorAt((this.k0 + i) * DXG, this.s0 + j * DZG); // same global lattice
+    if (i < 0 || j < 0 || i >= this.W || j >= NZG) return this.sample((this.k0 + i) * DXG, this.s0 + j * DZG); // same global lattice
     const o = j * this.W + i;
     let v = this.h[o];
-    if (v !== v) { v = this.ctx.floorAt((this.k0 + i) * DXG, this.s0 + j * DZG); this.h[o] = v; }
+    if (v !== v) { v = this.sample((this.k0 + i) * DXG, this.s0 + j * DZG); this.h[o] = v; }
     return v;
   }
   // floor height at (x, s); sets this.nx/ny/nz (local frame normal, z = -s)
@@ -732,14 +802,15 @@ export function presence(ctx, key) {
 }
 
 // Staged populators: stage 0 runs layout(ctx) -> { batches, extra, more } and caches it per chunk.
-// `more` (optional) is a list of continuation functions that keep filling the same batches, one per
-// later stage, so heavy layouts stay within the frame budget. Once they are done, the merge work is
-// packed into jobs of <= VERTS_PER_STAGE vertices, one job per stage. The last stage flushes the rest.
-const VERTS_PER_STAGE = 10000;
+// `more` (optional) is a list of small continuation functions that keep filling the same batches; each
+// later stage runs as many as fit in STAGE_BUDGET ms, so heavy layouts never hitch a frame. Then the
+// batches are sliced and obstacles / labels registered (more continuation steps, same budget), and the
+// merge work goes out one job per stage (<= VERTS_PER_STAGE vertices). The last stage flushes whatever is left.
+const VERTS_PER_STAGE = 10000, STAGE_BUDGET = 2; // vertices per merge stage; ms of layout continuations per stage
 const morton = (i, j) => { let k = 0; for (let b = 0; b < 4; b++) k |= ((i >> b) & 1) << (2 * b) | ((j >> b) & 1) << (2 * b + 1); return k; };
-export function staged(layout, nBuild = 32) {
+export function staged(layout, nBuild = 96) { // ~3x the stages a reef chunk needs here; an idle stage costs ~1 us
   const cache = new WeakMap();
-  const plan = (ctx, L) => {
+  const plan = (ctx, L) => { // slice into merge jobs; queue the registration steps
     L.jobs = [];
     for (const b of L.batches) {
       if (!b || !b.items.length) continue;
@@ -754,35 +825,36 @@ export function staged(layout, nBuild = 32) {
       for (let k = 0; k < n; k++) L.jobs.push([b, k, n]);
     }
     L.next = 0;
-    register(ctx, L.batches, L.extra);
-    // meshes built directly during layout (shafts, plumes, instanced grass...) go out with this stage
-    return L.extra && L.extra.length ? L.extra : [];
+    // meshes built directly during layout (shafts, plumes, instanced grass...) go out one per stage too
+    if (L.extra) for (let i = L.extra.length - 1; i >= 0; i--) L.jobs.unshift([L.extra[i]]);
+    L.more.push(...registerSteps(ctx, L.batches, L.extra));
   };
   const pops = [(ctx) => {
+    const tr = typeof window !== 'undefined' && window.__stageTrace, t0 = performance.now();
     const L = layout(ctx);
+    if (tr) tr.push(['layout', performance.now() - t0]);
     if (!L) return null;
     L.more = L.more || [];
     cache.set(ctx.group, L);
-    if (L.more.length) return null;
-    const ex = plan(ctx, L);
-    return ex.length ? finish(ex, ctx.tier) : null;
+    return null;
   }];
   for (let k = 0; k < nBuild; k++) {
     const last = k === nBuild - 1;
     pops.push((ctx) => {
       const L = cache.get(ctx.group);
       if (!L) return null;
-      let parts = [];
-      if (L.more.length) {
-        do L.more.shift()(); while (last && L.more.length);
-        if (L.more.length) return null;
-        parts = plan(ctx, L);
-        if (!last) { if (!L.jobs.length) cache.delete(ctx.group); return parts.length ? finish(parts, ctx.tier) : null; }
+      const tr = typeof window !== 'undefined' && window.__stageTrace, t0 = performance.now();
+      if (L.more.length || !L.jobs) { // continuations, slicing, registration: as many as fit in the stage budget (all on the last stage)
+        do { if (L.more.length) L.more.shift()(); else plan(ctx, L); } while ((L.more.length || !L.jobs) && (last || performance.now() - t0 < STAGE_BUDGET));
+        if (tr) tr.push(['more', performance.now() - t0]);
+        if (!last) return null; // merges get stages of their own
       }
       const jobs = last ? L.jobs.slice(L.next) : L.jobs.slice(L.next, L.next + 1);
       L.next += jobs.length;
       if (last || L.next >= L.jobs.length) cache.delete(ctx.group);
-      return finish(parts.concat(jobs.map(([b, i, n]) => b.build(i, n))), ctx.tier);
+      const r = finish(jobs.map((j) => (j.length === 1 ? j[0] : j[0].build(j[1], j[2]))), ctx.tier);
+      if (tr) tr.push(['merge', performance.now() - t0, jobs.reduce((v, j) => v + (j.length === 1 ? 0 : j[0].vc / j[2]), 0)]);
+      return r;
     });
   }
   return pops;
@@ -868,53 +940,108 @@ export function bendSpots(ctx, thr = 0.012, step = 2) { // apexes ~35 m apart; l
 export function named(t, name) { for (const x of Array.isArray(t) ? t : [t]) x.label = name; return t; }
 export function soft(t) { for (const x of Array.isArray(t) ? t : [t]) x.solid = false; return t; }
 const MAX_OBS = 400, MAX_LABELS = 150;
-function register(ctx, batches, extra = null) {
-  if (typeof window !== 'undefined' && (window.__propsAudit || window.__propsGapCheck)) { // debug: ground/ceiling contact audit
+// A fitted capsule encloses its item, whose geometry keeps the flight-tube clearance; where the capsule's
+// empty bulge would reach within 1 m of the camera path line, slide it away from the path (low capsules
+// that stay LOW_GAP below the camera are left alone).
+function keepOff(ctx, c) {
+  const [r, a, e] = c, P = pathTab(ctx);
+  { // quick reject: the capsule's bounding sphere is well clear of the path at its middle
+    const ms = (a[2] + e[2]) / 2, half = Math.hypot(e[0] - a[0], e[1] - a[1], e[2] - a[2]) / 2;
+    if (Math.abs(a[0] + e[0] - 2 * ctx.pathX(ms)) / 2 > r + half + 6) return c;
+  }
+  let best = 1e9, dir = null;
+  const s0 = Math.min(a[2], e[2]) - r, s1 = Math.max(a[2], e[2]) + r, n = Math.max(2, Math.ceil((s1 - s0) / 0.5));
+  for (let i = 0; i <= n; i++) {
+    const s = s0 + (s1 - s0) * i / n, u = s - P.a;
+    let px, py;
+    if (u >= 0 && u < P.n - 1) { const k = u | 0, f = u - k; px = P.X[k] + (P.X[k + 1] - P.X[k]) * f; py = P.Y[k] + (P.Y[k + 1] - P.Y[k]) * f; }
+    else { px = ctx.pathX(s); py = ctx.pathY(s); }
+    if (Math.max(a[1], e[1]) + r <= py - LOW_GAP) continue;
+    const ux = e[0] - a[0], uy = e[1] - a[1], us = e[2] - a[2], L2 = ux * ux + uy * uy + us * us;
+    let t = L2 > 0 ? ((px - a[0]) * ux + (py - a[1]) * uy + (s - a[2]) * us) / L2 : 0; t = Math.max(0, Math.min(1, t));
+    const qx = a[0] + ux * t - px, qy = a[1] + uy * t - py, qs = a[2] + us * t - s, d = Math.hypot(qx, qy, qs) - r;
+    if (d < best) { best = d; dir = [qx, qy, qs]; }
+  }
+  if (best >= 1 || !dir) return c;
+  const l = Math.hypot(dir[0], dir[1], dir[2]) || 1, m = (1.05 - best) / l;
+  return [r, [a[0] + dir[0] * m, a[1] + dir[1] * m, a[2] + dir[2] * m], [e[0] + dir[0] * m, e[1] + dir[1] * m, e[2] + dir[2] * m]];
+}
+// Obstacles and "i" labels for a finished layout, as continuation steps (a chunk can hold thousands of
+// items): REG_PER items per step, then one step commits the largest ones to the chunk.
+const REG_PER = 150;
+function registerSteps(ctx, batches, extra = null) {
+  const out = [];
+  if (typeof window !== 'undefined' && (window.__propsAudit || window.__propsGapCheck)) out.push(() => { // debug: ground/ceiling contact audit
     const L = window.__propsItems || (window.__propsItems = []), gnd = groundOf(ctx);
     for (const b of extra ? [...batches, ...extra] : batches) if (b && b.items) for (const it of b.items) {
       it._sw = !!(b.mat && b.mat.side === THREE.DoubleSide); // soft / swaying (clearance check uses the lens radius)
       if (it.g) L.push({ it, s0: ctx.s0, group: ctx.group, gnd, ctx, mode: 'floor' });
       if (it.hang) L.push({ it, s0: ctx.s0, group: ctx.group, gnd, ctx, mode: 'ceil' });
     }
-  }
-  if (!ctx.addObstacle && !ctx.addLabel) return;
+  });
+  if (!ctx.addObstacle && !ctx.addLabel) return out;
   const obs = [], labels = [];
   for (const b of batches) {
     if (!b || !b.items) continue;
-    const swayMat = b.mat && b.mat.side === THREE.DoubleSide;
-    for (const it of b.items) {
-      const t = it.tpl, bx = t.box;
-      const size = Math.max((bx[3] - bx[0]) * it.sx, (bx[4] - bx[1]) * it.sy, (bx[5] - bx[2]) * it.sz);
-      const R = it.R, tf = (x, y, z) => {
-        const px = x * it.sx, py = y * it.sy, pz = z * it.sz;
-        return [R[0] * px + R[1] * py + R[2] * pz + it.x, R[3] * px + R[4] * py + R[5] * pz + it.y, ctx.s0 - (R[6] * px + R[7] * py + R[8] * pz + it.z)];
-      };
-      const name = it.lbl || t.label;
-      if (name && size > 0.12) {
-        const c = tf((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2);
-        labels.push([it.lbl ? size * 3 : size, name, c, it.fact || t.fact]);
-      }
-      if (swayMat || !t.solid || size < 0.4) continue;
-      for (const o of t.obstacles()) {
+    for (let a = 0; a < b.items.length; a += REG_PER) out.push(() => registerItems(ctx, b, a, Math.min(b.items.length, a + REG_PER), obs, labels));
+  }
+  out.push(() => {
+    if (ctx.addObstacle) {
+      obs.sort((p, q) => q[0] - p[0]);
+      const nO = Math.max(0, Math.min(MAX_OBS - (ctx._obsCount || 0), obs.length));
+      for (let i = 0; i < nO; i++) { const [r, a, e] = obs[i]; ctx.addObstacle(a[0], a[1], a[2], e[0], e[1], e[2], r); }
+    }
+    if (ctx.addLabel) {
+      labels.sort((p, q) => q[0] - p[0]);
+      const nL = Math.max(0, Math.min(MAX_LABELS - (ctx._lblCount || 0), labels.length));
+      for (let i = 0; i < nL; i++) { const [, n, c, f] = labels[i]; ctx.addLabel(n, c[0], c[1], c[2], f || undefined); }
+    }
+    ctx._obsCount = Math.min(MAX_OBS, (ctx._obsCount || 0) + obs.length);
+    ctx._lblCount = Math.min(MAX_LABELS, (ctx._lblCount || 0) + labels.length);
+  });
+  return out;
+}
+function registerItems(ctx, b, i0, i1, obs, labels) {
+  const swayMat = b.mat && b.mat.side === THREE.DoubleSide;
+  for (let i = i0; i < i1; i++) {
+    const it = b.items[i], t = it.tpl, bx = t.box;
+    const size = Math.max((bx[3] - bx[0]) * it.sx, (bx[4] - bx[1]) * it.sy, (bx[5] - bx[2]) * it.sz);
+    const R = it.R, tf = (x, y, z) => {
+      const px = x * it.sx, py = y * it.sy, pz = z * it.sz;
+      return [R[0] * px + R[1] * py + R[2] * pz + it.x, R[3] * px + R[4] * py + R[5] * pz + it.y, ctx.s0 - (R[6] * px + R[7] * py + R[8] * pz + it.z)];
+    };
+    const name = it.lbl || t.label;
+    if (name && size > 0.12) {
+      const c = tf((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2);
+      labels.push([it.lbl ? size * 3 : size, name, c, it.fact || t.fact]);
+    }
+    // no obstacles for soft things, ground cover (draped patches) or anything lower than a hand
+    if (swayMat || !t.solid || size < 0.4 || t.drape || (bx[4] - bx[1]) * it.sy < 0.2) continue;
+    if (t.obs) { // authored capsules (arches, gates, hulls...): used as drawn
+      for (const o of t.obs) {
         const vert = Math.abs(o[1] - o[4]) > Math.abs(o[0] - o[3]) + Math.abs(o[2] - o[5]);
         const k = vert ? Math.max(it.sx, it.sz) : Math.max(it.sx, it.sy, it.sz);
         const a = tf(o[0], o[1], o[2]), e = tf(o[3], o[4], o[5]);
         obs.push([o[6] * k * 1.08 + 0.1, a, e]);
       }
+      continue;
     }
+    if (size < 1.5) { // small: one capsule along the longest scaled axis of the box (no vertex pass)
+      const e = [(bx[3] - bx[0]) * it.sx, (bx[4] - bx[1]) * it.sy, (bx[5] - bx[2]) * it.sz], c = [(bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2];
+      const ax = e[0] >= e[1] && e[0] >= e[2] ? 0 : e[1] >= e[2] ? 1 : 2, r = Math.hypot(e[(ax + 1) % 3], e[(ax + 2) % 3]) / 2, half = Math.max(0, e[ax] / 2 - r * 0.7);
+      const A = [c[0], c[1], c[2]], B = [c[0], c[1], c[2]], sc = [it.sx, it.sy, it.sz];
+      A[ax] -= half / sc[ax]; B[ax] += half / sc[ax];
+      obs.push(keepOff(ctx, [r * 0.9 + 0.05, tf(A[0], A[1], A[2]), tf(B[0], B[1], B[2])]));
+      continue;
+    }
+    // big: a capsule chain fitted to the real shape at this item's (possibly very non-uniform) scale
+    const ry = it.sy / it.sx, rz = it.sz / it.sx, F = t.capsules(ry, rz, 6), cy = ry / F.fy, cz = rz / F.fz, kr = Math.max(1, cy, cz) * it.sx;
+    const tc = (x, y, z) => { // normalised fit space -> global
+      const px = x * it.sx, py = y * cy * it.sx, pz = z * cz * it.sx;
+      return [R[0] * px + R[1] * py + R[2] * pz + it.x, R[3] * px + R[4] * py + R[5] * pz + it.y, ctx.s0 - (R[6] * px + R[7] * py + R[8] * pz + it.z)];
+    };
+    for (const o of F.list) obs.push(keepOff(ctx, [o[6] * kr * 1.03 + 0.05, tc(o[0], o[1], o[2]), tc(o[3], o[4], o[5])]));
   }
-  if (ctx.addObstacle) {
-    obs.sort((p, q) => q[0] - p[0]);
-    const nO = Math.max(0, Math.min(MAX_OBS - (ctx._obsCount || 0), obs.length));
-    for (let i = 0; i < nO; i++) { const [r, a, e] = obs[i]; ctx.addObstacle(a[0], a[1], a[2], e[0], e[1], e[2], r); }
-  }
-  if (ctx.addLabel) {
-    labels.sort((p, q) => q[0] - p[0]);
-    const nL = Math.max(0, Math.min(MAX_LABELS - (ctx._lblCount || 0), labels.length));
-    for (let i = 0; i < nL; i++) { const [, n, c, f] = labels[i]; ctx.addLabel(n, c[0], c[1], c[2], f || undefined); }
-  }
-  ctx._obsCount = Math.min(MAX_OBS, (ctx._obsCount || 0) + obs.length);
-  ctx._lblCount = Math.min(MAX_LABELS, (ctx._lblCount || 0) + labels.length);
 }
 
 // ---------- shape variants: deform a template N ways (noise displacement, non-uniform scale, bend, twist) ----------
@@ -998,7 +1125,8 @@ export function auditGap(rec) {
   }
   for (let i = 0; i < pts.length; i += 3) {
     const wx = pts[i], wy = pts[i + 1], ws = pts[i + 2];
-    const g = ceil ? rec.ctx.ceilingAt(wx, ws) - wy : wy - rec.gnd.h(wx, ws, it);
+    // hanging items under open water (icebergs in a lead) are pinned to the surface instead of the ice
+    const g = ceil ? Math.min(rec.ctx.ceilingAt(wx, ws), rec.ctx.surfaceY) - wy : wy - rec.gnd.h(wx, ws, it);
     const k = Math.min(2, Math.floor((wx - xa) / cx)) * 3 + Math.min(2, Math.floor((ws - sa) / cs));
     const v = cell.get(k);
     cell.set(k, v === undefined ? g : Math.min(v, g));

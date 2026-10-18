@@ -1,7 +1,7 @@
 // Placement helpers shared by the biome populators.
 // Everything placed on the ground is seated on its real contact band (template.foot) over the chunk's
 // composite ground (floor mesh + support props), so nothing floats; ceiling props hang by their top band.
-import { orient, propClear, rotY, TAU, TUBE, poi, tierK } from './core.js';
+import { orient, propClear, rotY, TAU, TUBE, poi, tierK, ceilSampler } from './core.js';
 import { noise2 } from '../noise.js';
 
 export function pickW(rng, list) {
@@ -44,11 +44,11 @@ export function groundY(fs, x, s, tpl, R, sx, sy, sz, few = false) {
 
 // y that pushes every head point (top band) at or above the ceiling, for things hanging from it
 export function ceilY(ctx, x, s, tpl, R, sx, sy, sz) {
-  const H = tpl.head;
+  const H = tpl.head, cs = ceilSampler(ctx);
   let y = -1e9;
   for (let i = 0; i < H.length; i += 3) {
     const px = H[i] * sx, py = H[i + 1] * sy, pz = H[i + 2] * sz;
-    y = Math.max(y, ctx.ceilingAt(x + R[0] * px + R[1] * py + R[2] * pz, s - (R[6] * px + R[7] * py + R[8] * pz)) - (R[3] * px + R[4] * py + R[5] * pz));
+    y = Math.max(y, cs.at(x + R[0] * px + R[1] * py + R[2] * pz, s - (R[6] * px + R[7] * py + R[8] * pz)) - (R[3] * px + R[4] * py + R[5] * pz));
   }
   return y;
 }
@@ -74,7 +74,11 @@ export function putAt(ctx, batch, spec, x, y, s, nx, ny, nz, rng, sizeK = 1, fs 
   const top = ctx.surfaceY - 0.08;
   const tilt = spec.tilt ?? ((spec.follow ?? 0.6) >= 0.95 ? 0.03 : 0.14);
   const yaw = spec.yaw !== undefined ? spec.yaw + (rng() - 0.5) * (spec.yawJ ?? 0.15) : rng() * TAU;
-  const R = spec.R || (support || drape ? rotY(yaw) : orient(nx, ny, nz, spec.follow ?? 0.6, yaw, (rng() - 0.5) * tilt, (rng() - 0.5) * tilt));
+  // never lean further than ~37 deg into a steep face: the base then always sinks into the surface
+  // (seated vertically) instead of tipping over onto its edge
+  let ox = nx, oy = ny, oz = nz;
+  if (oy < 0.8) { const h = Math.hypot(ox, oz) || 1; ox = ox / h * 0.6; oz = oz / h * 0.6; oy = 0.8; }
+  const R = spec.R || (support || drape ? rotY(yaw) : orient(ox, oy, oz, spec.follow ?? 0.6, yaw, (rng() - 0.5) * tilt, (rng() - 0.5) * tilt));
   const lean = Math.sqrt(R[1] * R[1] + R[7] * R[7]), up = Math.max(0.2, R[4]); // tilted items reach sideways
   let ok = false;
   for (let t = 0; t < 4; t++) {
@@ -184,6 +188,23 @@ export function putBend(ctx, fs, batch, spec, b, rng) {
   const x = bendX(ctx, b, tpl.r * sc, rng);
   const y = fs.at(x, b.s);
   return putAt(ctx, batch, { ...spec, tpl, scale: [sc, sc], tilt: 0, follow: Math.min(spec.follow ?? 0.3, 0.25) }, x, y, b.s, fs.nx, fs.ny, fs.nz, rng, 1, fs) ? x : null;
+}
+
+// Split n iterations of body(k) into continuation steps of `per` iterations (see core.staged).
+export function steps(n, per, body) {
+  const out = [];
+  for (let a = 0; a < n; a += per) { const b = Math.min(n, a + per); out.push(() => { for (let k = a; k < b; k++) body(k); }); }
+  return out;
+}
+// microDetail as continuation steps sharing one clusterer
+export function microSteps(ctx, fs, batch, rng, key, list, n, d1 = 30, per = 40) {
+  const next = clusterer(ctx, rng, 0, d1, 1.25, { r: [0.4, 3], n: [2, 9], single: 0.25, patch: 13, seed: 41 });
+  return steps(Math.round(n * tierK(ctx)), per, () => {
+    const p = next();
+    if (!p || rng() > ctx.weightOf(p.s, key)) return;
+    const e = pickW(rng, list);
+    putFloor(ctx, fs, batch, e.spec, p.x, p.s, rng);
+  });
 }
 
 // Dense low micro detail across the floor, including directly under the path (scaled by GPU tier).

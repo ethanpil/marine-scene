@@ -3,7 +3,7 @@
 // each chunk instantiates the field members whose centre lies inside it.
 import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK, bendSpots, vary, rotZ, tierK, poi } from './core.js';
 import { musselBed, rockInto, rockSet } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer, groundY } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, bendX, microDetail, clusterer, groundY, microSteps, steps } from './scatter.js';
 import { MAT, billboardMesh } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -223,20 +223,18 @@ export function layoutVents(ctx) {
     }
   };
   const chim = members.filter((m) => m.kind === 'chimney'), life = members.filter((m) => m.kind !== 'chimney'), more = [];
-  for (let q = 0; q < chim.length; q += 3) more.push(() => chim.slice(q, q + 3).forEach(one));
-  for (let q = 0; q < life.length; q += 40) more.push(() => life.slice(q, q + 40).forEach(one));
-  more.push(() => microDetail(ctx, fs, near, rng, 'vents', sp.micro, 110, 28));
+  for (const m of chim) more.push(() => one(m));
+  for (let q = 0; q < life.length; q += 15) { const part = life.slice(q, q + 15); more.push(() => part.forEach(one)); }
+  more.push(...microSteps(ctx, fs, near, rng, 'vents', sp.micro, 110, 28, 28));
   // sparse rocks and the odd mat elsewhere
-  more.push(() => {
-    const nextP200 = clusterer(ctx, rng, 0, 40, 1);
-    for (let k = 0; k < 50 * tk; k++) {
-      const p = nextP200();
-      if (!p) continue;
-      if (rng() > ctx.weightOf(p.s, 'vents')) continue;
-      if (rng() < 0.7 / comm.mats) putFloor(ctx, fs, mid, sp.rock, p.x, p.s, rng);
-      else putFloor(ctx, fs, near, sp.mat, p.x, p.s, rng);
-    }
-    // plumes and glow halos once every chimney is seated
+  const nextP200 = clusterer(ctx, rng, 0, 40, 1);
+  more.push(...steps(Math.round(50 * tk), 25, () => {
+    const p = nextP200();
+    if (!p || rng() > ctx.weightOf(p.s, 'vents')) return;
+    if (rng() < 0.7 / comm.mats) putFloor(ctx, fs, mid, sp.rock, p.x, p.s, rng);
+    else putFloor(ctx, fs, near, sp.mat, p.x, p.s, rng);
+  }));
+  more.push(() => { // plumes and glow halos once every chimney is seated
     const pm = billboardMesh(plumes, comm.white ? MAT.plumeWhite : MAT.plume, rng); if (pm) L.extra.push(pm);
     const hm = billboardMesh(halos, MAT.halo, rng); if (hm) L.extra.push(hm);
   });
