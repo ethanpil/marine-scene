@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { BIOMES } from './biomes.js';
 import { applyWater, U } from './water.js';
 import { mulberry32, noise2, fbm2, smoothstep, clamp } from './noise.js';
+import { obstacles } from './obstacles.js';
 
 export const CHUNK = 64;          // metres of travel per chunk
 const DX = 1.5;                   // lateral grid spacing (globally aligned)
@@ -114,7 +115,7 @@ export class Terrain {
       }
       if ((j & 7) === 7) yield;
     }
-    const chunk = { idx, s0, group: new THREE.Group(), floor: null, ceil: null, props: [] };
+    const chunk = { idx, s0, group: new THREE.Group(), floor: null, ceil: null, props: [], obstacles: [], labels: [] };
     chunk.group.position.set(0, 0, -s0);
     chunk.floor = new THREE.Mesh(this._gridGeometry(hf, rows, x0, NX, false), this.floorMat);
     chunk.floor.receiveShadow = !!this.shadows;
@@ -156,6 +157,11 @@ export class Terrain {
       weightOf: (s, k) => seq.weightOf(s, k),
       segments: seq.segmentsBetween(chunk.s0, chunk.s0 + CHUNK),
       surfaceY: U.uSurfaceY.value,
+      // Register a solid capsule (GLOBAL x/y and travel distance s) that creatures must avoid.
+      // Pass a = b for a sphere. Removed automatically when the chunk unloads.
+      addObstacle: (ax, ay, as, bx, by, bs, r) => { chunk.obstacles.push(obstacles.add({ ax, ay, as, bx, by, bs, r })); },
+      // Name shown by the "i" overlay, anchored at GLOBAL (x, y, s).
+      addLabel: (name, x, y, s) => { chunk.labels.push({ name, x, y, z: -s }); },
     };
   }
 
@@ -237,7 +243,12 @@ export class Terrain {
     c.floor.geometry.dispose();
     if (c.ceil) c.ceil.geometry.dispose();
     for (const p of c.props) { try { p.dispose && p.dispose(); } catch (e) { console.error(e); } }
+    for (const o of c.obstacles) obstacles.remove(o);
+    c.obstacles.length = 0; c.labels.length = 0;
   }
+
+  // Label provider for the "i" overlay.
+  labels(out) { for (const c of this.chunks.values()) for (const l of c.labels) out.push(l); }
 
   // Build everything needed immediately (startup).
   prime(camS) {

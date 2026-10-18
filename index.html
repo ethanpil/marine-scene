@@ -17,6 +17,13 @@
       text-shadow: 0 2px 18px rgba(0, 20, 40, .8); white-space: nowrap; }
     #caption small { display: block; margin-top: .7em; font-size: .38em; letter-spacing: .4em; opacity: .75; text-align: center; }
     #stats { position: fixed; left: 10px; top: 10px; color: #bfe; font: 12px monospace; white-space: pre; display: none; }
+    #labels { position: fixed; inset: 0; pointer-events: none; display: none; }
+    #labels .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; font: 500 12px/1 system-ui, sans-serif;
+      color: #effbff; text-shadow: 0 1px 3px rgba(0, 15, 30, .9), 0 0 8px rgba(0, 15, 30, .6); }
+    #labels .dot { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, .85); }
+    #labels .txt { position: absolute; left: 7px; top: -18px; padding: 2px 6px; border-radius: 3px;
+      background: rgba(2, 30, 48, .45); border-left: 1px solid rgba(255, 255, 255, .6); }
     #help { position: fixed; right: 14px; bottom: 12px; color: #cfeaf3; font: 12px system-ui, sans-serif; opacity: 0; transition: opacity 1s; }
   </style>
   <script type="importmap">
@@ -30,7 +37,7 @@
   <div id="loader">Descending&hellip;</div>
   <div id="caption"></div>
   <div id="stats"></div>
-  <div id="help">H captions &middot; F fullscreen &middot; S stats &middot; Space pause &middot; &larr;/&rarr; speed &middot; N next zone</div>
+  <div id="help">H captions &middot; I names &middot; F fullscreen &middot; S stats &middot; Space pause &middot; &larr;/&rarr; speed &middot; N next zone</div>
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

@@ -8,6 +8,8 @@ import { Post } from './post.js';
 import { registerProps } from './props/index.js';
 import { Creatures } from './creatures/index.js';
 import { noise1, smoothstep } from './noise.js';
+import { obstacles } from './obstacles.js';
+import { Labels } from './labels.js';
 
 const qs = new URLSearchParams(location.search);
 const SEED = qs.has('seed') ? parseInt(qs.get('seed'), 10) : (Math.random() * 1e9) | 0;
@@ -61,15 +63,18 @@ const seq = new BiomeSequence(SEED, qs.get('biome') || 'reef');
 const shape = new WorldShape(seq);
 const terrain = new Terrain(world, shape, seq);
 terrain.shadows = SHADOWS;
-const env = { shape, seq, world, scene, camera, renderer, U, BIOMES, seed: SEED, shadows: SHADOWS };
+const env = { shape, seq, world, scene, camera, renderer, U, BIOMES, seed: SEED, shadows: SHADOWS, obstacles };
 registerProps(terrain, env);
 const creatures = new Creatures(world, env);
+const labels = new Labels();
+labels.add((out) => terrain.labels(out));
+labels.add((out) => { if (creatures.labels) creatures.labels(out); });
 
 const background = new Background(); scene.add(background.mesh);
 const surface = new Surface(); scene.add(surface.mesh);
 const snow = new MarineSnow(); scene.add(snow.mesh);
 const post = new Post(renderer, scene, camera, tier === 'low' ? { msaa: 0, shaftDiv: 4, shaftSteps: 16 } : { msaa: 4, shaftDiv: 2, shaftSteps: 24 });
-window.__ocean = { scene, camera, terrain, shape, seq, creatures, post, U };
+window.__ocean = { scene, camera, terrain, shape, seq, creatures, post, U, obstacles, labels };
 
 // ---------- blended environment parameters ----------
 const P = { sigma: [0, 0, 0], lightSigma: [0, 0, 0], deep: [0, 0, 0], up: [0, 0, 0], sun: 0, caustic: 0, shafts: 0, ambient: 0, glow: 0, snow: 0 };
@@ -146,6 +151,7 @@ addEventListener('keydown', (e) => {
   else if (e.key === 'f' || e.key === 'F') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
   else if (e.key === 's' || e.key === 'S') { statsOn = !statsOn; statsEl.style.display = statsOn ? 'block' : 'none'; }
   else if (e.key === ' ') paused = !paused;
+  else if (e.key === 'i' || e.key === 'I') labels.toggle();
   else if (e.key === 'ArrowRight') speed = Math.min(40, speed * 1.4);
   else if (e.key === 'ArrowLeft') speed = Math.max(0.5, speed / 1.4);
   else if (e.key === 'n' || e.key === 'N') { const g = seq.segs[seq.segAt(s)]; s = g.end - 60; terrain.prime(s); }
@@ -263,6 +269,7 @@ function tick(dt, draw) {
   snow.update(camera, dt, renderer);
   creatures.update(paused ? 0 : dt, time, camState);
   updateCaption(dt);
+  labels.update(dt, camera, Oz);
   helpTimer -= dt; helpEl.style.opacity = helpTimer > 0 ? '0.7' : '0';
   if (helpTimer < 0) document.body.style.cursor = 'none';
   if (!draw) return;
