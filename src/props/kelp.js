@@ -1,6 +1,6 @@
 // Giant kelp forest: stipes rise from holdfasts to the surface, carrying blades on gas bladders,
 // and spread into a floating canopy. Sway (style 1) grows with height so bases stay anchored.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, LENS } from './core.js';
+import { Builder, Batch, T, TAU, vn3, sat, sstep, lerp, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, LENS } from './core.js';
 import { grassPatch } from './shapes.js';
 import { putFloor, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
@@ -18,80 +18,105 @@ function octa(b, c, rx, ry, rz, col, f0, f1) {
   for (const f of F) b.t(v[f[0]], v[f[1]], v[f[2]]);
 }
 
-// one leaf-shaped ruffled blade from p along direction d (unit), drooping
-function blade(b, rng, p, d, L, W, sw, swTip, droop) {
+// one leaf-shaped ruffled blade from p along direction d (unit): own colour, droop, ruffle, tattering
+function blade(b, rng, p, d, L, W, sw, swTip, droop, col, tatter) {
   const side = [-d[2], 0, d[0]], sl = Math.hypot(side[0], side[2]) || 1;
   side[0] /= sl; side[2] /= sl;
-  const segs = 3, k = rng() * 10;
+  const segs = L > 1.2 ? 4 : 3, k = rng() * 10, ruf = W * (0.1 + 0.45 * rng()), twist = (rng() - 0.5) * 1.2;
+  const notch = tatter ? Math.floor(rng() * (segs + 1)) : -1, cut = tatter && rng() < 0.5;
   let q = p.slice(), dir = d.slice();
   const v0 = b.vc;
   for (let i = 0; i <= segs; i++) {
-    const t = i / segs, w = W * Math.pow(Math.sin(Math.min(1, t * 0.9 + 0.1) * Math.PI), 0.7) * (i === segs ? 0.2 : 1);
-    const ruf = 0.25 * W * Math.sin(t * 9 + k);
-    const c = 0.8 + 0.4 * t;
+    const t = i / segs;
+    let w = W * Math.pow(Math.sin(Math.min(1, t * 0.9 + 0.1) * Math.PI), 0.6 + 0.4 * rng());
+    if (i === segs) w = cut ? W * 0.5 : W * 0.15;
+    if (i === notch) w *= 0.3 + 0.3 * rng();
+    const rr = ruf * Math.sin(t * 9 + k), tw = twist * t;
+    const sx = side[0] * Math.cos(tw), sz = side[2] * Math.cos(tw), sy = Math.sin(tw);
+    const c = 0.75 + 0.45 * t * (0.7 + 0.6 * rng());
     const f = lerp(sw, swTip, t);
-    b.v(q[0] - side[0] * w, q[1] + ruf, q[2] - side[2] * w, 0, 1, 0, BLADE[0] * c, BLADE[1] * c, BLADE[2] * c, f, 1);
-    b.v(q[0] + side[0] * w, q[1] - ruf, q[2] + side[2] * w, 0, 1, 0, BLADE[0] * c, BLADE[1] * c, BLADE[2] * c, f, 1);
-    dir = [dir[0], dir[1] - droop, dir[2]];
+    b.v(q[0] - sx * w, q[1] + rr - sy * w, q[2] - sz * w, 0, 1, 0, col[0] * c, col[1] * c, col[2] * c, f, 1);
+    b.v(q[0] + sx * w, q[1] - rr + sy * w, q[2] + sz * w, 0, 1, 0, col[0] * c, col[1] * c, col[2] * c, f, 1);
+    dir = [dir[0], dir[1] - droop * (0.6 + 0.8 * rng()), dir[2]];
     const l = Math.hypot(...dir); dir = dir.map((x) => x / l);
-    q = [q[0] + dir[0] * L / segs, q[1] + dir[1] * L / segs, q[2] + dir[2] * L / segs];
+    const st = (L / segs) * (cut && i === segs - 1 ? 0.6 : 1);
+    q = [q[0] + dir[0] * st, q[1] + dir[1] * st, q[2] + dir[2] * st];
   }
   const i0 = b.I.length;
   for (let i = 0; i < segs; i++) { const a = v0 + i * 2; b.t(a, a + 2, a + 1); b.t(a + 1, a + 2, a + 3); }
   b.smooth(v0, i0);
 }
 
+// One plant: random age, stipe count, lean, curvature; irregular blade spacing/clusters/gaps;
+// per-blade size, angle (all around the stipe), droop, twist, hue; old plants are tattered.
 function kelpPlant(seed, H, lod = 0) {
   const b = new Builder(), rng = mulberry32(seed);
-  const amp = 0.9 * Math.min(1, H / 14) + 0.25;
+  const age = rng(), amp = 0.9 * Math.min(1, H / 14) + 0.25;
   const swAt = (y) => amp * Math.pow(sat(y / H), 1.3);
-  // holdfast: tangle of root-like lumps
+  const hue = [0.92 + rng() * 0.2, 0.9 + rng() * 0.2, 0.8 + rng() * 0.4];
+  const hf = 0.25 + age * 0.25;
   b.blob(2, (x, y, z, o) => {
-    const d = 1 + 0.35 * Math.sin(x * 7 + seed) * Math.sin(z * 6);
-    o[0] = x * 0.35 * d; o[1] = Math.max(0, y) * 0.28 + 0.02; o[2] = z * 0.35 * d;
-    o[3] = STIPE[0] * 0.8; o[4] = STIPE[1] * 0.8; o[5] = STIPE[2] * 0.8; o[6] = 0; o[7] = 1;
+    const d = 1 + 0.4 * Math.sin(x * 7 + seed) * Math.sin(z * 6) + 0.2 * vn3(x * 3, y * 3, z * 3, seed);
+    o[0] = x * hf * d; o[1] = Math.max(0, y) * hf * 0.8 + 0.02; o[2] = z * hf * d;
+    o[3] = STIPE[0] * 0.7; o[4] = STIPE[1] * 0.7; o[5] = STIPE[2] * 0.7; o[6] = 0; o[7] = 1;
   });
-  const nSt = lod ? 2 + Math.floor(rng() * 2) : 3 + Math.floor(rng() * 2);
+  const nSt = lod ? 1 + Math.floor(rng() * 3) : 1 + Math.floor(rng() * (2 + age * 4.5));
   for (let k = 0; k < nSt; k++) {
-    const ca = rng() * TAU, cd = [Math.cos(ca), Math.sin(ca)];
-    let p = [(rng() - 0.5) * 0.3, 0.2, (rng() - 0.5) * 0.3];
-    const pts = [p], top = H - 0.3 - rng() * 0.25, step = lod ? 1.4 : 0.75;
-    const wx = rng() * 10, wz = rng() * 10;
+    const reach = rng() < 0.25 + 0.5 * (1 - age) ? 0.45 + rng() * 0.45 : 1; // young stipes stop short
+    const top = reach < 1 ? H * reach : H - 0.25 - rng() * 0.3;
+    const la = rng() * TAU, lean = rng() * 0.18, cd = [Math.cos(la), Math.sin(la)];
+    const cf = 0.2 + rng() * 0.6, ca = 0.05 + rng() * 0.3, cph = rng() * 10, cph2 = rng() * 10;
+    let p = [(rng() - 0.5) * hf, 0.15, (rng() - 0.5) * hf];
+    const pts = [p], step = lod ? 1.4 : 0.6 + rng() * 0.35;
     while (p[1] < top - step) {
-      const y = p[1] + step;
-      p = [p[0] + 0.12 * Math.sin(y * 0.4 + wx) + cd[0] * 0.03, y, p[2] + 0.12 * Math.sin(y * 0.37 + wz) + cd[1] * 0.03];
+      const y = p[1] + step * (0.8 + 0.4 * rng());
+      p = [p[0] + ca * Math.sin(y * cf + cph) * step + cd[0] * lean * step, y, p[2] + ca * Math.sin(y * cf * 0.9 + cph2) * step + cd[1] * lean * step];
       pts.push(p);
     }
     const nTop = pts.length;
-    const lc = 3 + rng() * 3.5, nc = lod ? 3 : 6; // canopy run along the surface
-    for (let i = 1; i <= nc; i++) {
-      p = [p[0] + cd[0] * lc / nc, top + 0.06 * Math.sin(i * 1.7), p[2] + cd[1] * lc / nc];
-      pts.push(p);
+    if (reach === 1) {
+      const lc = 2 + rng() * 5, nc = lod ? 3 : 4 + Math.floor(rng() * 4);
+      for (let i = 1; i <= nc; i++) { p = [p[0] + cd[0] * lc / nc + (rng() - 0.5) * 0.4, top + 0.08 * Math.sin(i * 1.7 + cph), p[2] + cd[1] * lc / nc + (rng() - 0.5) * 0.4]; pts.push(p); }
     }
-    b.tube(pts, pts.map((q, i) => (lod ? 0.06 : 0.045) * (1 - 0.35 * i / pts.length)), lod ? 3 : 4, (v, a, x, y, z, o) => {
-      const c = 0.8 + 0.3 * sat(y / H); o[3] = STIPE[0] * c; o[4] = STIPE[1] * c; o[5] = STIPE[2] * c; o[6] = swAt(y); o[7] = 1;
+    const r0 = (lod ? 0.055 : 0.03 + 0.025 * age) * (0.85 + 0.3 * rng());
+    b.tube(pts, pts.map((q, i) => r0 * (1 - 0.4 * i / pts.length)), lod ? 3 : 4, (v, a, x, y, z, o) => {
+      const c = 0.75 + 0.35 * sat(y / H); o[3] = STIPE[0] * c * hue[0]; o[4] = STIPE[1] * c * hue[1]; o[5] = STIPE[2] * c; o[6] = swAt(y); o[7] = 1;
     });
-    // blades + bladders
-    for (let i = 2; i < pts.length; i++) {
-      const q = pts[i], canopy = i >= nTop, sideA = ca + (i % 2 ? 1 : -1) * (1.2 + rng() * 0.6);
-      const up = canopy ? -0.2 - rng() * 0.4 : 0.55 + rng() * 0.4;
-      const d = [Math.cos(sideA), up, Math.sin(sideA)], l = Math.hypot(...d);
-      const bp = [q[0] + d[0] / l * 0.05, q[1] + d[1] / l * 0.05, q[2] + d[2] / l * 0.05];
-      const sw = swAt(q[1]);
-      if (!lod && i % 2) octa(b, bp, 0.035, 0.055, 0.035, [STIPE[0] * 1.5, STIPE[1] * 1.5, STIPE[2] * 1.4], sw, 1);
-      const L = (canopy ? 1.3 : 0.95) + rng() * 0.6 + (lod ? 0.5 : 0);
-      blade(b, rng, bp, [d[0] / l, d[1] / l, d[2] / l], L, (lod ? 0.2 : 0.13) + rng() * 0.08, sw, sw + 0.18, canopy ? 0.12 : 0.25);
+    // blades: walk the stipe with irregular gaps, clusters and missing blades
+    let acc = rng() * 0.8 + 0.6;
+    for (let i = 1; i < pts.length; i++) {
+      const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]);
+      acc -= seg;
+      while (acc <= 0) {
+        acc += (lod ? 0.9 : 0.25) + Math.pow(rng(), 2.2) * (lod ? 2.4 : 1.6);
+        if (rng() < 0.08 + 0.25 * age) continue; // lost blade
+        const t = rng(), q = [lerp(pts[i - 1][0], pts[i][0], t), lerp(pts[i - 1][1], pts[i][1], t), lerp(pts[i - 1][2], pts[i][2], t)];
+        const canopy = i >= nTop, az = rng() * TAU;
+        const up = canopy ? -0.1 - rng() * 0.5 : 0.25 + rng() * 0.9;
+        const d = [Math.cos(az), up, Math.sin(az)], l = Math.hypot(...d);
+        const bp = [q[0] + d[0] / l * 0.04, q[1] + d[1] / l * 0.04, q[2] + d[2] / l * 0.04];
+        const sw = swAt(q[1]);
+        if (!lod && rng() < 0.55) octa(b, bp, 0.025 + rng() * 0.02, 0.04 + rng() * 0.025, 0.03, [STIPE[0] * 1.5, STIPE[1] * 1.5, STIPE[2] * 1.4], sw, 1);
+        const young = 1 - 0.35 * (1 - age) * (1 - q[1] / H);
+        const L = (canopy ? 1.2 : 0.85) * (0.6 + rng() * 0.9) * young + (lod ? 0.5 : 0);
+        const W = (lod ? 0.2 : 0.11) * (0.6 + rng() * 0.9);
+        const hb = 0.85 + rng() * 0.3, gb = rng() * 0.15;
+        const col = [BLADE[0] * hue[0] * hb * (1 - gb), BLADE[1] * hue[1] * hb, BLADE[2] * hue[2] * hb * (1 + gb)];
+        blade(b, rng, bp, [d[0] / l, d[1] / l, d[2] / l], L, W, sw, sw + 0.12 + rng() * 0.15, 0.08 + rng() * 0.3, col, rng() < age * 0.6);
+      }
     }
   }
-  return b.build();
+  const t = b.build();
+  t.label = H > 8 ? 'Giant kelp' : 'Young giant kelp';
+  return t;
 }
 
 export function initKelp() {
-  T.kelp = [6, 10, 15, 21].map((H, i) => [kelpPlant(10 + i * 3, H), kelpPlant(11 + i * 3, H)]);
-  T.kelpLo = [6, 10, 15, 21].map((H, i) => [kelpPlant(50 + i * 3, H, 1), kelpPlant(51 + i * 3, H, 1)]);
-  T.kelpH = [6, 10, 15, 21];
+  const HS = [5, 7, 9, 11, 13, 15, 17, 19, 21, 23];
+  T.kelp = HS.flatMap((H, i) => [kelpPlant(10 + i * 7, H), kelpPlant(11 + i * 7, H * (0.93 + 0.1 * (i % 3)))]);
+  T.kelpLo = HS.map((H, i) => kelpPlant(500 + i * 7, H, 1));
   // true horizontal reach of each plant below its canopy (stipe drift + blades), for the tube test
-  for (const t of [...T.kelp.flat(), ...T.kelpLo.flat()]) {
+  for (const t of [...T.kelp, ...T.kelpLo]) {
     let r = 0;
     for (let i = 0; i < t.vc; i++) if (t.pos[i * 3 + 1] < t.maxY * 0.85) r = Math.max(r, Math.hypot(t.pos[i * 3], t.pos[i * 3 + 2]));
     t.rLow = r;
@@ -103,13 +128,13 @@ const S = {};
 function specs() {
   if (S.rock) return S;
   Object.assign(S, {
-    rock: { tpl: T.rocks, scale: [0.6, 2.4], follow: 0.5, tint: tintFrom([[0.38, 0.36, 0.33], [0.32, 0.33, 0.3]]) },
-    boulder: { tpl: T.mound, scale: [1.2, 2.8], follow: 0.3, tint: tintFrom([[0.36, 0.34, 0.3]]), sink: 0.15 },
+    rock: { tpl: T.rocks, scale: [0.6, 2.4], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.5, tint: tintFrom([[0.38, 0.36, 0.33], [0.32, 0.33, 0.3]]) },
+    boulder: { tpl: T.mound, scale: [1.2, 2.8], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.3, tint: tintFrom([[0.36, 0.34, 0.3]]), sink: 0.15 },
     urchin: { tpl: T.urchin[0], scale: [0.06, 0.1], follow: 0.8, tint: tintFrom([[0.55, 0.22, 0.6], [0.7, 0.18, 0.15], [0.3, 0.22, 0.32]]) },
     star: { tpl: T.star, scale: [0.1, 0.2], follow: 0.95, sink: 0, tint: tintFrom([[0.85, 0.3, 0.06], [0.5, 0.2, 0.55], [0.75, 0.12, 0.1]]) },
     anem: { tpl: T.anem, scale: [0.6, 1.1], follow: 0.7, sway: true, tint: tintFrom([[0.9, 0.45, 0.45], [0.6, 0.7, 0.55], [0.85, 0.75, 0.6]]) },
     sponge: { tpl: T.tubeSp, scale: [0.5, 1.0], follow: 0.5, tint: tintFrom([[0.7, 0.45, 0.15], [0.55, 0.25, 0.4]]) },
-    bendRock: { tpl: [...T.mound, ...T.pinnacle], scale: [1.4, 2.2], follow: 0.2, sink: 0.25, tint: tintFrom([[0.42, 0.38, 0.34], [0.38, 0.36, 0.33]]) },
+    bendRock: { tpl: [...T.mound, ...T.pinnacle], scale: [1.4, 2.2], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.2, sink: 0.25, tint: tintFrom([[0.42, 0.38, 0.34], [0.38, 0.36, 0.33]]) },
     pebbles: { tpl: T.pebbles, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[0.6, 0.58, 0.55], [0.55, 0.5, 0.45]], 0.1) },
     algae: { tpl: T.algae, scale: [0.6, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[0.9, 0.45, 0.5], [0.7, 0.55, 0.3], [0.55, 0.6, 0.3]], 0.12) },
     lump: { tpl: T.spongeLump, scale: [0.8, 1.6], follow: 0.7, tint: tintFrom([[0.85, 0.55, 0.2], [0.8, 0.3, 0.3], [0.7, 0.65, 0.4]]) },
@@ -129,7 +154,7 @@ export function layoutKelp(ctx) {
   const bk = budgetK(ctx, 'kelp');
   const kb = new Batch(MAT.sway, 120000 * bk), st = new Batch(MAT.static, 40000 * bk), sw = new Batch(MAT.sway, 12000 * bk);
   const plants = [];
-  for (let k = 0; k < 130; k++) {
+  for (let k = 0; k < 210; k++) {
     const p = spot(ctx, rng, 0, 45, 1.3);
     const grove = 0.5 + 0.5 * noise2(p.x / 26, p.s / 26, 301);
     if (rng() > ctx.weightOf(p.s, 'kelp') * (0.45 + 0.75 * grove)) continue;
@@ -139,10 +164,10 @@ export function layoutKelp(ctx) {
   for (const p of plants) {
     const y = fs.at(p.x, p.s), H = ctx.surfaceY - 0.35 - y;
     if (H < 3.5) continue;
-    let ci = 0;
-    for (let i = 0; i < T.kelpH.length; i++) if (Math.abs(T.kelpH[i] - H) < Math.abs(T.kelpH[ci] - H)) ci = i;
-    const lod = p.d > 20;
-    const tpl = rng.pick((lod ? T.kelpLo : T.kelp)[ci]), sy = H / tpl.maxY;
+    const lod = p.d > 20, pool = lod ? T.kelpLo : T.kelp;
+    const cands = pool.filter((t) => H / t.maxY > 0.8 && H / t.maxY < 1.25);
+    let tpl = cands.length ? rng.pick(cands) : pool.reduce((a, t) => (Math.abs(t.maxY - H) < Math.abs(a.maxY - H) ? t : a));
+    const sy = H / tpl.maxY;
     if (sy < 0.6 || sy > 1.6) continue;
     const sx = 0.9 + rng() * 0.3;
     // kelp is soft: the camera may fly through the forest, only the lens radius stays clear
@@ -165,6 +190,6 @@ export function layoutKelp(ctx) {
     const e = pickW(rng, sp.floorList);
     putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 0.8 + sstep(4, 30, p.d) * 0.6);
   }
-  kb.split = 3; st.split = 1; sw.split = 1; st.from = 3; sw.from = 3;
+  kb.split = 3; st.split = 2; sw.split = 1; st.from = 3; sw.from = 4;
   return { batches: [kb, st, sw] };
 }

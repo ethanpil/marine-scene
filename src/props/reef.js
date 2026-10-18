@@ -87,8 +87,8 @@ function giantClam(seed, mantle) {
 }
 
 export function initReef() {
-  T.stag = [101, 102, 103, 104].map(staghorn);
-  T.table = [1, 2, 3].map(tableCoral);
+  T.stag = [101, 102, 103, 104, 105, 106, 107, 108].map(staghorn);
+  T.table = [1, 2, 3, 4, 5, 6].map(tableCoral);
   T.brain = [1, 2].map(brainCoral);
   T.boulder = [1, 2, 3].map(boulderCoral);
   T.coralMound = [41, 42, 43].map((sd) => {
@@ -97,16 +97,15 @@ export function initReef() {
     b.paint(0, (i, x, y, z, nx, ny, nz, o) => { o[3] = 0.55; o[4] = 2; });
     return b.build();
   });
-  T.fan = [1, 2, 3].map((s) => seaFan(s));
-  T.tubeSp = [tubeSponges(1), tubeSponges(2, { n: 6, h: 0.7, r: 0.09 }), tubeSponges(3, { n: 3, h: 1.4, r: 0.14 })];
-  T.barrel = [1, 2].map(barrelSponge);
-  T.soft = [1, 2, 3].map((s) => softCoral(s));
-  T.leather = [1, 2].map(leatherCoral);
-  T.anem = [
-    anemone(1, { tent: [0.75, 0.85, 0.55], tipC: [1.3, 1.2, 1.1], tentacles: 34, thick: 0.045 }),
-    anemone(2, { tent: [0.85, 0.55, 0.8], tipC: [1.25, 1.1, 1.3], tlen: 0.45, tentacles: 40, thick: 0.04 }),
-  ];
-  T.whip = [1, 2].map((s) => seaWhips(s));
+  T.fan = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((s) => seaFan(s, { h: 0.9 + (s % 4) * 0.2 }));
+  T.tubeSp = [tubeSponges(1), tubeSponges(2, { n: 6, h: 0.7, r: 0.09 }), tubeSponges(3, { n: 3, h: 1.4, r: 0.14 }), tubeSponges(4, { n: 2, h: 1.1, r: 0.16 }), tubeSponges(5, { n: 8, h: 0.5, r: 0.07 }), tubeSponges(6, { n: 4, h: 1.0, r: 0.11 })];
+  T.barrel = [1, 2, 3, 4].map(barrelSponge);
+  T.soft = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((s) => softCoral(s, { h: 0.6 + (s % 3) * 0.2 }));
+  T.leather = [1, 2, 3, 4].map(leatherCoral);
+  T.anem = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => anemone(k, k % 2
+    ? { tent: [0.75, 0.85, 0.55], tipC: [1.3, 1.2, 1.1], tentacles: 26 + k * 2, thick: 0.04 + 0.002 * k, tlen: 0.4 + 0.04 * k }
+    : { tent: [0.85, 0.55, 0.8], tipC: [1.25, 1.1, 1.3], tlen: 0.32 + 0.04 * k, tentacles: 30 + k * 2, thick: 0.038 }));
+  T.whip = [1, 2, 3, 4, 5, 6, 7, 8].map((s) => seaWhips(s, { n: 2 + (s % 6), h: 1 + (s % 3) * 0.3 }));
   T.clam = [giantClam(1, [0.08, 0.35, 0.75]), giantClam(2, [0.06, 0.5, 0.5]), giantClam(3, [0.35, 0.45, 0.12])];
   T.star = [seastar(1), seastar(2, { fat: 1.4 })];
   T.urchin = [urchin(1), urchin(2, { len: 2.4, spines: 40, body: [0.16, 0.13, 0.17] })];
@@ -190,7 +189,7 @@ export function layoutReef(ctx) {
   const pres = presence(ctx, 'reef');
   if (pres <= 0) return null;
   const R = specs(), rng = ctx.rng, fs = floorSampler(ctx), bk = budgetK(ctx, 'reef');
-  const st = new Batch(MAT.static, 132000 * bk), sw = new Batch(MAT.sway, 56000 * bk);
+  const st = new Batch(MAT.static, 112000 * bk), sw = new Batch(MAT.sway, 48000 * bk);
   for (const row of ROWS) {
     for (const side of [-1, 1]) {
       for (let s = ctx.s0 + rng() * row.step; s < ctx.s1; s += row.step * (0.75 + 0.5 * rng())) {
@@ -205,6 +204,15 @@ export function layoutReef(ctx) {
     if (rng() > ctx.weightOf(b.s, 'reef') * 0.85) continue;
     bommie(ctx, fs, st, sw, rng, bendX(ctx, b, T.coralMound[0].r * 2.4, rng, 1.2), b.s, 1.25, 10, 1.1, null);
   }
+  st.split = 4; sw.split = 4;
+  return { batches: [st, sw] };
+}
+
+// second layout chain: floor micro detail + small life (incl. under the camera)
+export function layoutReefMicro(ctx) {
+  if (presence(ctx, 'reef') <= 0) return null;
+  const R = specs(), rng = mulberry32((ctx.s0 * 2654435761) ^ 0x51f), fs = floorSampler(ctx), bk = budgetK(ctx, 'reef');
+  const st = new Batch(MAT.static, 22000 * bk), sw = new Batch(MAT.sway, 8000 * bk);
   microDetail(ctx, fs, st, rng, 'reef', R.micro, 130, 26);
   // small life everywhere, also under the camera
   for (let k = 0; k < 90; k++) {
@@ -213,6 +221,6 @@ export function layoutReef(ctx) {
     const e = pickW(rng, R.smallList);
     putFloor(ctx, fs, e.sway ? sw : st, R[e.k], p.x, p.s, rng, 0.8);
   }
-  st.split = 4; sw.split = 4;
+  st.split = 1; sw.split = 1;
   return { batches: [st, sw] };
 }

@@ -9,7 +9,7 @@ import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
 function seaPen(seed) {
-  const b = new Builder(), rng = mulberry32(seed), H = 0.45;
+  const b = new Builder(), rng = mulberry32(seed), H = 0.3 + 0.06 * (seed % 5);
   b.tube([[0, -0.05, 0], [0, H * 0.4, 0], [0.01, H, 0.01]], [0.012, 0.01, 0.006], 4, (v, a, x, y, z, o) => {
     o[3] = 0.9; o[4] = 0.75; o[5] = 0.55; o[6] = 0.03 * v * v; o[7] = 0;
   });
@@ -38,9 +38,9 @@ function burrows(seed, { n = 9, r = 1.4 } = {}) {
 }
 
 export function initSandflat() {
-  T.seaPen = [1, 2].map(seaPen);
+  T.seaPen = [1, 2, 3, 4, 5, 6].map(seaPen);
   T.burrows = [1, 2].map((s) => burrows(s));
-  T.tuft = [grassPatch(901, { n: 7, r: 0.18, h: 0.35, w: 0.03, segs: 2, base: [0.1, 0.18, 0.05], mid: [0.3, 0.55, 0.15], tipc: [0.6, 0.6, 0.25], sway: 0.25 })];
+  T.tuft = [1, 2, 3, 4, 5, 6].map((k) => grassPatch(900 + k, { n: 4 + k, r: 0.12 + 0.03 * k, h: 0.22 + 0.05 * k, w: 0.025 + 0.003 * k, segs: 2, base: [0.1, 0.18, 0.05], mid: [0.3, 0.55, 0.15], tipc: [0.6, 0.6, 0.25], sway: 0.25 }));
 }
 
 const S = {};
@@ -59,8 +59,8 @@ function specs() {
     rubble: { tpl: T.rubble, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[1, 0.97, 0.9], [0.9, 0.85, 0.8]], 0.08) },
     grit: { tpl: T.grit, scale: [0.8, 1.6], follow: 1, sink: 0.01, tint: tintFrom([[1, 0.97, 0.92]], 0.08) },
     algae: { tpl: T.algae, scale: [0.5, 1.4], follow: 1, sink: 0.01, tint: tintFrom([[0.8, 0.85, 0.6], [0.9, 0.75, 0.55]], 0.1) },
-    rock: { tpl: T.rocks, scale: [0.4, 1.4], follow: 0.5, tint: tintFrom([[0.68, 0.62, 0.52], [0.6, 0.58, 0.54]]) },
-    pinnacle: { tpl: T.pinnacle, scale: [1.0, 1.6], follow: 0.2, sink: 0.2, tint: tintFrom([[0.65, 0.58, 0.5], [0.58, 0.55, 0.5]]) },
+    rock: { tpl: T.rocks, scale: [0.4, 1.4], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.5, tint: tintFrom([[0.68, 0.62, 0.52], [0.6, 0.58, 0.54]]) },
+    pinnacle: { tpl: T.pinnacle, scale: [1.0, 1.6], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.2, sink: 0.2, tint: tintFrom([[0.65, 0.58, 0.5], [0.58, 0.55, 0.5]]) },
   });
   S.micro = [
     { w: 3, spec: S.grit }, { w: 2.2, spec: S.rubble }, { w: 1.6, spec: S.dollar }, { w: 1.2, spec: S.scallop }, { w: 1, spec: S.conch },

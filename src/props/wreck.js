@@ -145,6 +145,7 @@ function addMast(b, base, h, r, lean, rng, steel) {
   b.tube(pts, pts.map((p, i) => r * (1 - 0.25 * i / n)), 6, (v, a, x, y, z, o) => {
     const c = steel ? [0.2, 0.12, 0.08] : [0.28, 0.21, 0.13]; o[3] = c[0]; o[4] = c[1]; o[5] = c[2]; o[6] = 0.85; o[7] = steel ? 4 : 0;
   }, { cap: true });
+  if (b.obs) b.obs.push([base[0], base[1], base[2], pts[n][0], pts[n][1], pts[n][2], r + 0.15]);
 }
 
 function buildShip(kind, seed, cutLo = 0, cutHi = 1) {
@@ -153,6 +154,8 @@ function buildShip(kind, seed, cutLo = 0, cutHi = 1) {
     ? { L: 30, B: 8.5, D: 5.5, kind, seed, th: 0.18, nu: 40, holeThr: 0.86, cutLo, cutHi }
     : { L: 46, B: 9.5, D: 7, kind, seed, th: 0.12, nu: 46, holeThr: 0.9, cutLo, cutHi };
   const H = hullShape(spec), hole = holeFn(spec, rng), b = new Builder();
+  const zA = spec.L / 2 - cutHi * spec.L, zB = spec.L / 2 - cutLo * spec.L, hr = Math.max(spec.B / 2, spec.D * 0.5);
+  b.obs = [[0, spec.D * 0.5, Math.min(zA + hr * 0.7, (zA + zB) / 2), 0, spec.D * 0.5, Math.max(zB - hr * 0.7, (zA + zB) / 2), hr]];
   for (const side of [-1, 1]) { hullSkin(b, spec, H, hole, side, false); hullSkin(b, spec, H, hole, side, true); }
   addRibs(b, spec, H, hole, rng);
   addDeck(b, spec, H, rng);
@@ -194,6 +197,7 @@ function buildShip(kind, seed, cutLo = 0, cutHi = 1) {
       const fv = b.vc;
       b.lathe(14, 4, (v) => [1.0 + 0.1 * v, v * 4.2], null, (v, a, x, y, z, o) => { o[3] = 0.25; o[4] = 0.1; o[5] = 0.06; o[6] = 0.5; o[7] = 4; });
       b.xform(fv, rotX(0.25 + rng() * 0.35), 0, y0 + 7.5, zc + 1.5, 1, 1, 1.4);
+      b.obs.push([0, y0 + 3.5, zc - len / 2 + spec.B * 0.4, 0, y0 + 3.5, zc + len / 2 - spec.B * 0.4, spec.B * 0.45], [0, y0 + 8, zc + 1.5, 0, y0 + 11, zc + 2.5, 1.3]);
     }
     for (const u of [0.49, 0.63, 0.77]) if (inside(u) && rng() < 0.8) {
       addMast(b, [0, H.sheer(u) - 0.5, zAt(u)], 3 + rng() * 6, 0.22, [(rng() - 0.5) * 0.5, (rng() - 0.5) * 0.4], rng, true);
@@ -241,6 +245,7 @@ function airplane(seed, brokenWing) {
     }
   };
   wing(-1, 7.5); wing(1, brokenWing ? 3.4 : 7.5);
+  b.obs = [[0, 1.05, -L * 0.3, 0, 1.05, L * 0.6, 1.25], [-8, 1.1, -L * 0.12, brokenWing ? 4 : 8, 1.1, -L * 0.12, 0.6], [0, 2.4, L * 0.62, 0, 3.2, L * 0.62, 1]];
   // tail
   for (const side of [-1, 1]) b.box(3.4, 0.12, 1.3, rotY(side * 0.15), side * 1.7, 1.55, L * 0.62, col, f);
   b.box(0.14, 2.4, 1.6, rotX(-0.3), 0, 2.6, L * 0.62, col, f);
@@ -480,7 +485,7 @@ function specs() {
   if (S.rock) return S;
   const D = T.debris;
   Object.assign(S, {
-    rock: { tpl: T.rocks, scale: [0.5, 1.8], follow: 0.5, tint: tintFrom([[0.42, 0.41, 0.38]]) },
+    rock: { tpl: T.rocks, scale: [0.5, 1.8], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.5, tint: tintFrom([[0.42, 0.41, 0.38]]) },
     barrel: { tpl: D.barrel, scale: [0.9, 1.1], follow: 0.7, tilt: 0.3, tint: tintFrom([[1, 1, 1]]) },
     drum: { tpl: D.drum, scale: [0.9, 1.1], follow: 0.7, tilt: 0.3, tint: tintFrom([[1, 1, 1], [0.6, 0.7, 0.8]]) },
     crate: { tpl: D.crate, scale: [0.8, 1.2], follow: 0.8, tilt: 0.4, sink: 0.15, tint: tintFrom([[1, 1, 1]]) },

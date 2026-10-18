@@ -4,43 +4,105 @@ import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, pres
 import { stoneInto } from './shapes.js';
 import { putFloor, putAt, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
-import { mulberry32, noise1, noise2 } from '../noise.js';
+import { mulberry32, noise1, noise2, hash2i } from '../noise.js';
 
 const STONE = [0.62, 0.58, 0.5];
+// marble, sandstone, granite, basalt, limestone, travertine (instance tints over STONE)
+const STONES = [[1.35, 1.35, 1.38], [1.25, 1.0, 0.72], [0.95, 0.95, 0.98], [0.52, 0.52, 0.56], [1.15, 1.1, 1.0], [1.2, 1.05, 0.85]];
 const GROW = 0.95;
 const I3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 
 // ---------- architecture ----------
-function column(seed, { H = 6, R = 0.42, broken = 0, capital = true } = {}) {
-  const b = new Builder(), rng = mulberry32(seed);
-  const top = broken ? H * broken : H;
-  b.box(R * 3.1, 0.35, R * 3.1, null, 0, 0.175, 0, STONE.map((c) => c * 0.9), [GROW, 0]);
-  b.lathe(16, 2, (v) => [R * (1.3 - 0.25 * v), 0.35 + v * 0.3], null, (v, a, x, y, z, o) => { o[3] = STONE[0]; o[4] = STONE[1]; o[5] = STONE[2]; o[6] = GROW; });
-  const NV = Math.max(3, Math.round(top / 0.6));
+const COL_STYLES = {
+  doric: { name: 'Doric column', flutes: 20, flute: 0.045, base: 'plinth', cap: 'doric', taper: 0.12, slim: 1 },
+  ionic: { name: 'Ionic column', flutes: 24, flute: 0.05, base: 'attic', cap: 'ionic', taper: 0.08, slim: 0.82 },
+  corinthian: { name: 'Corinthian column', flutes: 24, flute: 0.05, base: 'attic', cap: 'corinthian', taper: 0.08, slim: 0.75 },
+  tuscan: { name: 'Tuscan column', base: 'attic', cap: 'doric', taper: 0.15, slim: 1.05 },
+  papyrus: { name: 'Papyrus column', lobes: 8, lobe: 0.09, base: 'disc', cap: 'papyrus', taper: 0.1, slim: 1.25 },
+  lotus: { name: 'Lotus-bud column', lobes: 6, lobe: 0.12, base: 'disc', cap: 'lotus', taper: 0.06, slim: 1.2 },
+  maya: { name: 'Maya carved pillar', square: true, carved: true, base: 'block', cap: 'block', taper: 0.04, slim: 1.15 },
+  minoan: { name: 'Minoan column', base: 'disc', cap: 'cushion', taper: -0.2, slim: 1.05, col: [0.6, 0.24, 0.17] },
+  solomonic: { name: 'Solomonic column', flutes: 6, flute: 0.14, twist: 1.6, base: 'attic', cap: 'doric', taper: 0.06, slim: 0.9 },
+  octagonal: { name: 'Octagonal pillar', poly: 8, base: 'block', cap: 'block', taper: 0.05, slim: 1 },
+};
+export const COL_STYLE_KEYS = Object.keys(COL_STYLES);
+
+function column(seed, style = 'doric', { H = 6, broken = 0, capital = true } = {}) {
+  const st = COL_STYLES[style], b = new Builder(), rng = mulberry32(seed);
+  const R = 0.36 * st.slim * (0.85 + rng() * 0.35);
+  const top = broken ? H * broken : H, key = 6.05 + rng() * 0.9;
+  const scol = st.col || STONE, f = [GROW, key];
+  const paintStone = (c) => (v, a, x, y, z, o) => {
+    const k = 0.85 + 0.2 * vn3(x * 3, y * 3, z * 3, seed); o[3] = c[0] * k; o[4] = c[1] * k; o[5] = c[2] * k; o[6] = GROW; o[7] = key;
+  };
+  const stoneLathe = (nu, nv, prof, rad, c = STONE) => b.lathe(nu, nv, prof, rad, paintStone(c));
+  let y0 = 0.3;
+  if (st.base === 'plinth' || st.base === 'block') { b.box(R * 3, 0.35, R * 3, rotY((rng() - 0.5) * 0.05), 0, 0.175, 0, STONE.map((c) => c * 0.9), f); y0 = 0.35; }
+  if (st.base === 'attic') { b.box(R * 3, 0.25, R * 3, null, 0, 0.125, 0, STONE.map((c) => c * 0.9), f); stoneLathe(16, 4, (v) => [R * (1.32 - 0.25 * v + 0.1 * Math.sin(v * Math.PI * 2)), 0.25 + v * 0.35]); y0 = 0.6; }
+  if (st.base === 'disc') { stoneLathe(16, 2, (v) => [R * (1.5 - 0.3 * v), v * 0.3]); y0 = 0.3; }
+  const NV = Math.max(3, Math.round((top - y0) / 0.55)), NU = st.square ? 24 : 20;
   const v0 = b.vc;
-  b.grid(20, NV, (u, v, i, j, o) => {
-    const a = u * TAU, y0 = 0.65, jag = broken ? 0.35 * vn3(Math.cos(a) * 2, Math.sin(a) * 2, seed, seed) + 0.25 * Math.sin(a * 3 + seed) : 0;
-    const y = y0 + v * (top - y0 + (j === NV ? jag : 0));
-    const fl = 1 - 0.045 * (0.5 + 0.5 * Math.cos(a * 20));
-    const r = R * (1 - 0.12 * (y / H) + 0.03 * Math.sin((y / H) * Math.PI)) * fl * (1 + 0.04 * vn3(Math.cos(a) * 3, y * 1.5, Math.sin(a) * 3, seed + 1));
+  b.grid(NU, NV, (u, v, i, j, o) => {
+    const a = u * TAU, jag = broken ? 0.4 * vn3(Math.cos(a) * 2, Math.sin(a) * 2, seed, seed) + 0.25 * Math.sin(a * 3 + seed) : 0;
+    const y = y0 + v * (top - y0 + (j === NV ? jag : 0)), t = y / H;
+    let r = R * (1 - st.taper * t + 0.025 * Math.sin(t * Math.PI));
+    const aa = a + (st.twist ? st.twist * y : 0);
+    if (st.flutes) r *= 1 - st.flute * (0.5 + 0.5 * Math.cos(aa * st.flutes));
+    if (st.lobes) r *= 1 + st.lobe * Math.abs(Math.sin(aa * st.lobes / 2)) - st.lobe * 0.5 * sstep(0.85, 1, t);
+    if (st.square) r *= 0.95 / Math.pow(Math.pow(Math.abs(Math.cos(a)), 8) + Math.pow(Math.abs(Math.sin(a)), 8), 1 / 8);
+    if (st.poly) { const sec = TAU / st.poly, m = ((a % sec) + sec) % sec; r *= Math.cos(Math.PI / st.poly) / Math.cos(m - Math.PI / st.poly); }
+    const band = ((y * 1.3) % 1 + 1) % 1;
+    if (st.carved) r *= band < 0.1 ? 0.92 : 1 - 0.04 * sstep(0.3, 0.7, vn3(a * 2, y * 4, 0, seed));
+    r *= 1 + 0.035 * vn3(Math.cos(a) * 3, y * 1.5, Math.sin(a) * 3, seed + 1) - 0.06 * sstep(0.55, 0.8, vn3(Math.cos(a) * 5, y * 2.5, Math.sin(a) * 5, seed + 9));
     o[0] = Math.cos(a) * r; o[1] = y; o[2] = Math.sin(a) * r;
-    const c = 0.85 + 0.15 * vn3(o[0] * 3, y * 2, o[2] * 3, seed + 5);
-    o[3] = STONE[0] * c; o[4] = STONE[1] * c; o[5] = STONE[2] * c; o[6] = GROW * 0.7; o[7] = 0;
+    const c = (0.82 + 0.2 * vn3(o[0] * 3, y * 2, o[2] * 3, seed + 5)) * (st.carved && band < 0.1 ? 0.7 : 1);
+    o[3] = scol[0] * c; o[4] = scol[1] * c; o[5] = scol[2] * c; o[6] = GROW * 0.7; o[7] = key;
   }, { wrapU: true });
-  const ring = v0 + 20 * NV;
+  const ring = v0 + NU * NV;
   if (broken) {
-    let cy = 0; for (let i = 0; i < 20; i++) cy += b.P[(ring + i) * 3 + 1];
-    const c = b.v(0, cy / 20 - 0.05, 0, 0, 1, 0, STONE[0], STONE[1], STONE[2], GROW, 0);
-    for (let i = 0; i < 20; i++) b.t(ring + ((i + 1) % 20), ring + i, c);
+    let cy = 0; for (let i = 0; i < NU; i++) cy += b.P[(ring + i) * 3 + 1];
+    const c = b.v(0, cy / NU - 0.05, 0, 0, 1, 0, STONE[0], STONE[1], STONE[2], GROW, key);
+    for (let i = 0; i < NU; i++) b.t(ring + ((i + 1) % NU), ring + i, c);
   } else if (capital) {
-    const rt = R * 0.88;
-    b.lathe(16, 3, (v) => [rt * (1 + 0.45 * Math.sin(v * Math.PI * 0.5)), top + v * 0.4], null, (v, a, x, y, z, o) => { o[3] = STONE[0]; o[4] = STONE[1]; o[5] = STONE[2]; o[6] = GROW; });
-    b.box(R * 3.0, 0.32, R * 3.0, null, 0, top + 0.56, 0, STONE, [GROW, 0]);
+    const rt = R * (1 - st.taper);
+    if (st.cap === 'doric') { stoneLathe(16, 3, (v) => [rt * (1 + 0.45 * Math.sin(v * Math.PI * 0.5)), top + v * 0.4]); b.box(R * 3, 0.32, R * 3, null, 0, top + 0.56, 0, STONE, f); }
+    if (st.cap === 'ionic') {
+      stoneLathe(16, 2, (v) => [rt * (1 + 0.25 * v), top + v * 0.25]);
+      b.box(R * 2.9, 0.2, R * 2.3, null, 0, top + 0.45, 0, STONE, f);
+      for (const sd of [-1, 1]) {
+        b.tube([[sd * R * 1.15, top + 0.2, -R * 1.1], [sd * R * 1.15, top + 0.2, R * 1.1]], [R * 0.32, R * 0.32], 8, paintStone(STONE), { cap: true });
+        for (const fz of [-1, 1]) {
+          const sp = [];
+          for (let k = 0; k <= 10; k++) { const th = k / 10 * TAU * 1.6, rr = R * 0.3 * (1 - k / 13); sp.push([sd * R * 1.15 + Math.cos(th) * rr, top + 0.2 + Math.sin(th) * rr, fz * (R * 1.1 + 0.02)]); }
+          b.tube(sp, sp.map(() => 0.03), 3, paintStone(STONE.map((c) => c * 0.8)));
+        }
+      }
+    }
+    if (st.cap === 'corinthian') {
+      stoneLathe(16, 5, (v) => [rt * (1 + 0.45 * v), top + v * R * 2.2], (a, v) => 1 + 0.16 * Math.max(0, Math.sin(a * 8 + (v > 0.5 ? 0.4 : 0))) * Math.sin((v * 2 % 1) * Math.PI));
+      b.box(R * 3.1, 0.22, R * 3.1, null, 0, top + R * 2.2 + 0.11, 0, STONE, f);
+    }
+    if (st.cap === 'papyrus') stoneLathe(16, 4, (v) => [rt * (0.9 + 0.8 * Math.sin(v * Math.PI * 0.5)), top + v * R * 2.2], (a) => 1 + 0.06 * Math.abs(Math.sin(a * 8)));
+    if (st.cap === 'lotus') stoneLathe(14, 5, (v) => [rt * (1 + 0.35 * Math.sin(v * Math.PI) - 0.3 * v), top + v * R * 2.4], (a) => 1 + 0.1 * Math.abs(Math.sin(a * 3)));
+    if (st.cap === 'block') b.box(R * 2.8, 0.45, R * 2.8, null, 0, top + 0.22, 0, STONE.map((c) => c * 0.95), f);
+    if (st.cap === 'cushion') { stoneLathe(16, 4, (v) => [rt * (1 + 0.4 * Math.sin(v * Math.PI)), top + v * 0.45], null, [0.25, 0.2, 0.18]); b.box(R * 2.9, 0.25, R * 2.9, null, 0, top + 0.57, 0, [0.3, 0.25, 0.22], f); }
   }
-  return b.build();
+  const t = b.build();
+  t.label = broken ? 'Broken ' + st.name.toLowerCase() : st.name;
+  return t;
 }
 
-// masonry block: flat-shaded box with slightly chipped (jittered) corners, tinted per block
+// a fallen drum lying on its side
+function drum(seed, style) {
+  const t = column(seed, style, { H: 1.1 + (seed % 3) * 0.3, broken: 1, capital: false });
+  const b = new Builder();
+  b.P = Array.from(t.pos); b.N = Array.from(t.nor); b.C = Array.from(t.col); b.F = Array.from(t.fx); b.I = Array.from(t.idx);
+  b.xform(0, rotZ(Math.PI / 2), 0.6, 0.35, 0);
+  const d = b.build();
+  d.label = 'Fallen column drum';
+  return d;
+}
+
 function stoneBlock(b, rng, sx, sy, sz, R, x, y, z, col = STONE) {
   const v0 = b.vc, k = 0.82 + 0.25 * rng();
   b.box(sx * 0.97, sy * 0.97, sz * 0.97, null, 0, 0, 0, col.map((c) => c * k), [GROW, 0]);
@@ -68,12 +130,18 @@ function gateArch(seed, R) {
     stoneBlock(b, rng, keystone ? 1.6 : 1.45, (Math.PI * rm) / n * 0.97 + (keystone ? 0.15 : 0), 1.7, rotZ(a), Math.cos(a) * rm, Math.sin(a) * rm, 0);
   }
   for (let x = -R - pw; x < R + pw; x += 1.6) stoneBlock(b, rng, 1.6, 0.8, 1.9, null, x + 0.8, R + 1.85, 0);
+  b.obs = [[-R - 0.75, -10, 0, -R - 0.75, 0, 0, 0.85], [R + 0.75, -10, 0, R + 0.75, 0, 0, 0.85]];
+  for (let k = 0; k < 6; k++) { const a0 = Math.PI * k / 6, a1 = Math.PI * (k + 1) / 6, rm = R + 0.75; b.obs.push([Math.cos(a0) * rm, Math.sin(a0) * rm, 0, Math.cos(a1) * rm, Math.sin(a1) * rm, 0, 0.8]); }
+  b.obs.push([-R - 1.5, R + 1.85, 0, R + 1.5, R + 1.85, 0, 0.55]);
+  b.label = 'Roman arch';
   return b.build();
 }
 function gateTrilithon(seed, R) {
   const b = new Builder(), rng = mulberry32(seed), Hp = 10;
   for (const sd of [-1, 1]) stoneBlock(b, rng, 1.5, Hp + R * 0.95, 1.4, rotZ(sd * 0.02), sd * (R + 0.75), (-Hp + R * 0.95) / 2, 0);
   stoneBlock(b, rng, 2 * R + 3.8, 1.3, 1.6, rotZ((rng() - 0.5) * 0.03), 0, R * 0.95 + 0.8, 0);
+  b.obs = [[-R - 0.75, -10, 0, -R - 0.75, R * 0.95, 0, 0.85], [R + 0.75, -10, 0, R + 0.75, R * 0.95, 0, 0.85], [-R - 1.9, R * 0.95 + 0.8, 0, R + 1.9, R * 0.95 + 0.8, 0, 0.75]];
+  b.label = 'Trilithon gate';
   return b.build();
 }
 function gateTorii(seed, R) {
@@ -87,6 +155,8 @@ function gateTorii(seed, R) {
   for (let k = 0; k <= 10; k++) { const x = -W + (2 * W * k) / 10, t = Math.abs(x) / W; top.push([x, R + 2.0 + 0.5 * t ** 3, 0]); }
   b.tube(top, top.map((p, k) => 0.42 - 0.08 * Math.abs(k - 5) / 5), 6, (v, a, x, y, z, o) => { o[3] = 0.12; o[4] = 0.1; o[5] = 0.09; o[6] = GROW; }, { cap: true });
   b.box(2 * R + 2.6, 0.45, 0.5, null, 0, R + 0.9, 0, col, [GROW, 0]);
+  b.obs = [[-R - 0.6, -10, 0, -R - 0.6, R + 2, 0, 0.5], [R + 0.6, -10, 0, R + 0.6, R + 2, 0, 0.5], [-R - 2.8, R + 2.1, 0, R + 2.8, R + 2.1, 0, 0.5]];
+  b.label = 'Torii gate';
   return b.build();
 }
 
@@ -133,8 +203,9 @@ function pyramid(seed) {
 
 function head(seed) {
   const b = new Builder();
+  const hr = mulberry32(seed * 31), wk = 0.5 + hr() * 0.25, hk = 0.85 + hr() * 0.4, nk = 0.15 + hr() * 0.25;
   b.blob(5, (x, y, z, o) => {
-    let px = x * 0.62, py = y * 1.05, pz = z * 0.55;
+    let px = x * wk, py = y * hk, pz = z * 0.55;
     if (py < -0.75) py = -0.75 - (py + 0.75) * 0.1;
     if (py > 0.8) py = 0.8 + (py - 0.8) * 0.3; // flat top
     let dark = 0;
@@ -142,7 +213,7 @@ function head(seed) {
       const f = z;
       pz += 0.12 * f * sstep(0.25, 0.4, y) * sstep(0.62, 0.45, y);            // brow ridge
       const nose = Math.exp(-(x * x) / 0.012) * sstep(-0.05, 0.25, y) * sstep(0.45, 0.3, y);
-      pz += 0.28 * nose * f;
+      pz += nk * nose * f;
       const eye = Math.exp(-((Math.abs(x) - 0.22) ** 2 + (y - 0.25) ** 2) / 0.006);
       pz -= 0.06 * eye; dark += eye * 0.5;
       const mouth = Math.exp(-(x * x) / 0.05) * Math.exp(-((y + 0.18) ** 2) / 0.002);
@@ -196,14 +267,23 @@ function slab(seed, w, d) {
 }
 
 export function initRuins() {
-  T.column = [column(1), column(2, { H: 7 })];
-  T.columnBroken = [column(3, { broken: 0.35 }), column(4, { broken: 0.6 }), column(5, { broken: 0.2 }), column(6, { broken: 0.8 })];
-  T.drum = [column(7, { H: 1.2, broken: 1, capital: false })];
+  T.colStyle = {};
+  let sd = 1;
+  for (const k of COL_STYLE_KEYS) {
+    T.colStyle[k] = {
+      intact: [column(sd++, k, { H: 5.5 + (sd % 3) }), column(sd++, k, { H: 6.5 + (sd % 4) * 0.6 })],
+      broken: [0.25, 0.45, 0.7].map((f) => column(sd++, k, { H: 6.5, broken: f + ((sd * 0.13) % 0.12) })),
+      drum: [drum(sd++, k)],
+    };
+  }
+  T.column = COL_STYLE_KEYS.flatMap((k) => T.colStyle[k].intact);
+  T.columnBroken = COL_STYLE_KEYS.flatMap((k) => T.colStyle[k].broken);
+  T.drum = COL_STYLE_KEYS.flatMap((k) => T.colStyle[k].drum);
   T.gate = [[4.4, 5.1, 5.8].map((R, i) => gateArch(10 + i, R)), [4.4, 5.1, 5.8].map((R, i) => gateTrilithon(20 + i, R)), [4.6, 5.4].map((R, i) => gateTorii(30 + i, R))];
-  T.wall = [1, 2, 3].map((s) => wall(s, 8)).concat([wall(4, 5)]);
+  T.wall = [1, 2, 3, 4, 5, 6, 7, 8].map((s) => wall(s, 4 + (s % 4) * 1.6));
   T.pyramid = [1, 2].map(pyramid);
-  T.head = [1, 2].map(head);
-  T.figure = [1, 2].map(figure);
+  T.head = [1, 2, 3, 4, 5].map(head);
+  T.figure = [1, 2, 3, 4, 5].map(figure);
   T.amphora = [amphora(1)];
   T.slab = [slab(1, 1.1, 0.8), slab(2, 0.8, 0.8), slab(3, 1.4, 0.7)];
   T.block = [1, 2].map((sd) => { const b = new Builder(); stoneInto(b, { sx: 1.2, sy: 0.7, sz: 0.9, p: 5, rough: 0.08, seed: sd, detail: 2, col: STONE, growth: GROW }); b.xform(0, I3, 0, 0.3, 0); return b.build(); });
@@ -213,9 +293,9 @@ export function initRuins() {
 const S = {};
 function specs() {
   if (S.rock) return S;
-  const st = tintFrom([[1, 1, 1], [0.92, 0.88, 0.82], [1.05, 1.0, 0.92]], 0.1);
+  const st = tintFrom(STONES, 0.1);
   Object.assign(S, {
-    rock: { tpl: T.rocks, scale: [0.4, 1.4], follow: 0.5, tint: tintFrom([[0.55, 0.52, 0.47]]) },
+    rock: { tpl: T.rocks, scale: [0.4, 1.4], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.5, tint: tintFrom([[0.55, 0.52, 0.47]]) },
     block: { tpl: T.block, scale: [0.7, 1.4], follow: 0.7, tilt: 0.5, sink: 0.15, tint: st },
     drum: { tpl: T.drum, scale: [0.9, 1.1], follow: 0.9, sink: 0.12, tint: st },
     amphora: { tpl: T.amphora, scale: [0.9, 1.3], follow: 0.6, tilt: 0.6, sink: 0.15, tint: tintFrom([[1, 1, 1], [0.8, 0.85, 0.9]]) },
@@ -309,9 +389,14 @@ export function layoutRuins(ctx) {
       if (rng() > w || h < -0.55) continue;
       const x = px + sd * (off + (rng() - 0.5) * 0.3);
       const y = fs.at(x, s);
-      const tpl = h > 0.1 ? rng.pick(T.column) : rng.pick(T.columnBroken);
+      // style changes every ~24 m, and individual pillars are often salvaged from other orders/stone
+      const blk = Math.floor(s / 24);
+      const set = T.colStyle[COL_STYLE_KEYS[((rng() < 0.35 ? rng() : hash2i(blk, 0, 715)) * COL_STYLE_KEYS.length) | 0]];
+      const sc = STONES[((rng() < 0.3 ? rng() : hash2i(blk, 1, 716)) * STONES.length) | 0];
+      const tpl = h > 0.1 ? rng.pick(set.intact) : rng.pick(set.broken);
       if (!tubeClear(ctx, x, s, y, y + tpl.maxY, 0.7)) continue;
-      st.add(tpl, x, y - 0.15, -(s - ctx.s0), rotY(yaw + (rng() - 0.5) * 0.2), 1, 1, 1, 0.92 + rng() * 0.15, 0.92 + rng() * 0.15, 0.9 + rng() * 0.12, 1);
+      const k = 0.85 + rng() * 0.28, hs = 0.75 + rng() * 0.5, ws = 0.8 + rng() * 0.45;
+      st.add(tpl, x, y - 0.15, -(s - ctx.s0), rotY(yaw + (rng() - 0.5) * 0.4), ws, hs, ws, sc[0] * k, sc[1] * k, sc[2] * k, rng() * 1.6);
       if (h < 0.1 && rng() < 0.5) putFloor(ctx, fs, st, sp.drum, x + sd * (1.5 + rng() * 2), s + (rng() - 0.5) * 3, rng);
     }
     if (noise1(s / 120, 713) > -0.25) {

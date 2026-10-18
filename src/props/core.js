@@ -243,7 +243,25 @@ export class Template {
       r = Math.max(r, Math.hypot(this.pos[i], this.pos[i + 2]));
     }
     this.minY = minY; this.maxY = maxY; this.r = r; this.h = maxY;
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+    for (let i = 0; i < this.pos.length; i += 3) {
+      x0 = Math.min(x0, this.pos[i]); x1 = Math.max(x1, this.pos[i]); z0 = Math.min(z0, this.pos[i + 2]); z1 = Math.max(z1, this.pos[i + 2]);
+    }
+    this.box = [x0, minY, z0, x1, maxY, z1];
+    this.obs = b.obs || null;      // explicit obstacle capsules [ax,ay,az,bx,by,bz,r] (template space)
+    this.label = b.label || null;  // common name for the "i" overlay
+    this.solid = b.solid ?? true;
     this._geo = null; this._pts = null;
+  }
+  // obstacle capsules: explicit, or one capsule fitted to the bounding box
+  obstacles() {
+    if (this.obs) return this.obs;
+    const [x0, y0, z0, x1, y1, z1] = this.box;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2, hx = (x1 - x0) / 2, hy = (y1 - y0) / 2, hz = (z1 - z0) / 2;
+    if (hy >= Math.max(hx, hz)) { const r = Math.max(hx, hz); this.obs = [[cx, y0 + r * 0.8, cz, cx, Math.max(y0 + r * 0.8, y1 - r * 0.8), cz, r]]; }
+    else if (hx >= hz) { const r = Math.max(hy, hz); this.obs = [[x0 + r * 0.8, cy, cz, Math.max(x0 + r * 0.8, x1 - r * 0.8), cy, cz, r]]; }
+    else { const r = Math.max(hy, hx); this.obs = [[cx, cy, z0 + r * 0.8, cx, cy, Math.max(z0 + r * 0.8, z1 - r * 0.8), r]]; }
+    return this.obs;
   }
   // shared BufferGeometry for instancing (never disposed)
   geometry() {
@@ -458,27 +476,31 @@ export function presence(ctx, key) {
 
 // Staged populators: stage 0 runs layout(ctx) -> parts (Batches / builder fns) and caches it per chunk;
 // stages 1..n each merge one slice of every batch (keeps each call within the frame budget).
-export function staged(layout, nBuild = 2) {
+const VERTS_PER_STAGE = 20000;
+export function staged(layout, nBuild = 8) {
   const cache = new WeakMap();
   const pops = [(ctx) => {
     const L = layout(ctx);
     if (!L) return null;
+    // pack merge work into jobs of <= VERTS_PER_STAGE vertices, one job per later stage
+    L.jobs = [];
+    for (const b of L.batches) {
+      if (!b || !b.items.length) continue;
+      const n = Math.max(1, Math.ceil(b.vc / VERTS_PER_STAGE));
+      for (let k = 0; k < n; k++) L.jobs.push([b, k, n]);
+    }
     cache.set(ctx.group, L);
+    register(ctx, L.batches);
     // meshes built directly during layout (shafts, plumes...) are returned here
     return L.extra && L.extra.length ? finish(L.extra) : null;
   }];
   for (let k = 0; k < nBuild; k++) {
     pops.push((ctx) => {
       const L = cache.get(ctx.group);
-      if (!L) return null;
-      if (k === nBuild - 1) cache.delete(ctx.group);
-      const out = [];
-      for (const b of L.batches) {
-        if (!b) continue;
-        const n = b.split ?? nBuild, q = k - (b.from ?? 0);
-        if (q >= 0 && q < n) out.push(b.build(q, n));
-      }
-      return finish(out);
+      if (!L || k >= L.jobs.length) return null;
+      const jobs = k === nBuild - 1 ? L.jobs.slice(k) : [L.jobs[k]];
+      if (k === nBuild - 1 || k === L.jobs.length - 1) cache.delete(ctx.group);
+      return finish(jobs.map(([b, i, n]) => b.build(i, n)));
     });
   }
   return pops;
@@ -545,4 +567,48 @@ export function bendSpots(ctx, thr = 0.0045, step = 2) {
     out.push({ s, side: c > 0 ? -1 : 1, c });
   }
   return out;
+}
+
+// ---------- creature obstacles + "i" overlay labels ----------
+export function named(t, name) { for (const x of Array.isArray(t) ? t : [t]) x.label = name; return t; }
+export function soft(t) { for (const x of Array.isArray(t) ? t : [t]) x.solid = false; return t; }
+const MAX_OBS = 400, MAX_LABELS = 150;
+function register(ctx, batches) {
+  if (!ctx.addObstacle && !ctx.addLabel) return;
+  const obs = [], labels = [];
+  for (const b of batches) {
+    if (!b || !b.items) continue;
+    const swayMat = b.mat && b.mat.side === THREE.DoubleSide;
+    for (const it of b.items) {
+      const t = it.tpl, bx = t.box;
+      const size = Math.max((bx[3] - bx[0]) * it.sx, (bx[4] - bx[1]) * it.sy, (bx[5] - bx[2]) * it.sz);
+      const R = it.R, tf = (x, y, z) => {
+        const px = x * it.sx, py = y * it.sy, pz = z * it.sz;
+        return [R[0] * px + R[1] * py + R[2] * pz + it.x, R[3] * px + R[4] * py + R[5] * pz + it.y, ctx.s0 - (R[6] * px + R[7] * py + R[8] * pz + it.z)];
+      };
+      if (t.label && size > 0.12) {
+        const c = tf((bx[0] + bx[3]) / 2, (bx[1] + bx[4]) / 2, (bx[2] + bx[5]) / 2);
+        labels.push([size, t.label, c]);
+      }
+      if (swayMat || !t.solid || size < 0.4) continue;
+      for (const o of t.obstacles()) {
+        const vert = Math.abs(o[1] - o[4]) > Math.abs(o[0] - o[3]) + Math.abs(o[2] - o[5]);
+        const k = vert ? Math.max(it.sx, it.sz) : Math.max(it.sx, it.sy, it.sz);
+        const a = tf(o[0], o[1], o[2]), e = tf(o[3], o[4], o[5]);
+        obs.push([o[6] * k * 1.08 + 0.1, a, e]);
+      }
+    }
+  }
+  if (ctx.addObstacle) {
+    obs.sort((p, q) => q[0] - p[0]);
+    const nO = Math.max(0, Math.min(MAX_OBS - (ctx._obsCount || 0), obs.length));
+    for (let i = 0; i < nO; i++) { const [r, a, e] = obs[i]; ctx.addObstacle(a[0], a[1], a[2], e[0], e[1], e[2], r); }
+  }
+  if (ctx.addLabel) {
+    labels.sort((p, q) => q[0] - p[0]);
+    const nL = Math.max(0, Math.min(MAX_LABELS - (ctx._lblCount || 0), labels.length));
+    for (let i = 0; i < nL; i++) { const [, n, c] = labels[i]; ctx.addLabel(n, c[0], c[1], c[2]); }
+  }
+  ctx._obsCount = Math.min(MAX_OBS, (ctx._obsCount || 0) + obs.length);
+  ctx._lblCount = Math.min(MAX_LABELS, (ctx._lblCount || 0) + labels.length);
 }

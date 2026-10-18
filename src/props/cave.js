@@ -61,7 +61,7 @@ export function initCave() {
     stalactite(3, [[1, 0, 0, 1.2], [0.7, -0.15, -0.05, 0.8]]),
   ];
   T.stalagmite = [1, 2, 3].map(stalagmite);
-  T.column = [1, 2].map(column);
+  T.caveColumn = [1, 2].map(column);
   T.deadTree = [1, 2].map(deadTree);
   const b = new Builder(); stoneInto(b, { sx: 1.6, sy: 0.9, sz: 1.2, p: 4, rough: 0.12, seed: 5, detail: 2, col: LIME, growth: 0.2, mode: 2 });
   b.xform(0, [1, 0, 0, 0, 1, 0, 0, 0, 1], 0, 0.4, 0); T.block = [b.build()];
@@ -71,7 +71,7 @@ const S = {};
 function specs() {
   if (S.rock) return S;
   Object.assign(S, {
-    rock: { tpl: [...T.rocks, ...T.block], scale: [0.5, 2.2], follow: 0.6, tint: tintFrom([[0.62, 0.58, 0.5], [0.5, 0.48, 0.44]]) },
+    rock: { tpl: [...T.rocks, ...T.block], scale: [0.5, 2.2], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.6, tint: tintFrom([[0.62, 0.58, 0.5], [0.5, 0.48, 0.44]]) },
     pebbles: { tpl: T.pebbles, scale: [0.8, 1.7], follow: 1, sink: 0.02, tint: tintFrom([[0.85, 0.8, 0.7], [0.75, 0.72, 0.66]], 0.08) },
     grit: { tpl: T.rubble, scale: [0.8, 1.5], follow: 1, sink: 0.02, tint: tintFrom([[0.8, 0.77, 0.7]], 0.08) },
     mite: { tpl: T.stalagmite, scale: [0.6, 2.6], ys: [0.6, 1.4], follow: 0.15, tint: tintFrom([[1, 1, 1]]) },
@@ -211,7 +211,7 @@ export function makeCaveLayout(env) {
       if (gap < 1.5 || gap > 10) continue;
       const sx = 0.7 + rng() * 1.2;
       if (!tubeClear(ctx, p.x, p.s, f, c, 0.55 * sx)) continue;
-      st.add(rng.pick(T.column), p.x, f - 0.3, -(p.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
+      st.add(rng.pick(T.caveColumn), p.x, f - 0.3, -(p.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
     }
     // columns on the outside of bends: the camera swings around them
     for (const b of bendSpots(ctx)) {
@@ -220,7 +220,7 @@ export function makeCaveLayout(env) {
       const c = ctx.ceilingAt(x, b.s), f = fs.at(x, b.s), gap = c - f;
       if (c > ctx.surfaceY - 0.4 || gap < 1.5 || gap > 14) continue;
       if (!tubeClear(ctx, x, b.s, f, c, 0.62 * sx)) continue;
-      st.add(rng.pick(T.column), x, f - 0.3, -(b.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
+      st.add(rng.pick(T.caveColumn), x, f - 0.3, -(b.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
     }
     microDetail(ctx, fs, st, rng, 'cave', sp.micro, 110, 20);
     // stalagmites and breakdown boulders on the floor (low ones also under the path)

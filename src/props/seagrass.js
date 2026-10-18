@@ -61,8 +61,8 @@ function sandDollar(seed) {
 }
 
 export function initSeagrass() {
-  T.grassNear = grassPatch(501, { n: 16, r: 0.55, h: 0.72, w: 0.042, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] });
-  T.grassFar = grassPatch(502, { n: 14, r: 0.95, h: 0.75, w: 0.06, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] });
+  T.grassNear = [501, 503, 505].map((sd, i) => grassPatch(sd, { n: 14 + i * 2, r: 0.5 + i * 0.07, h: 0.55 + i * 0.15, w: 0.034 + i * 0.008, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] }));
+  T.grassFar = [502, 504].map((sd, i) => grassPatch(sd, { n: 13 + i * 2, r: 0.9 + i * 0.1, h: 0.65 + i * 0.2, w: 0.055 + i * 0.01, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] }));
   T.conch = [conch(1)];
   T.cucumber = [cucumber(1), cucumber(2)];
   T.scallop = [scallop(1)];
@@ -74,7 +74,7 @@ const S = {};
 function specs() {
   if (S.rock) return S;
   Object.assign(S, {
-    rock: { tpl: T.rocks, scale: [0.3, 1.3], follow: 0.4, tint: tintFrom([[0.52, 0.5, 0.44], [0.46, 0.45, 0.42]]) },
+    rock: { tpl: T.rocks, scale: [0.3, 1.3], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.4, tint: tintFrom([[0.52, 0.5, 0.44], [0.46, 0.45, 0.42]]) },
     conch: { tpl: T.conch, scale: [0.18, 0.3], follow: 0.9, sink: 0.1, tint: tintFrom([[0.9, 0.85, 0.8]]) },
     cucumber: { tpl: T.cucumber, scale: [0.6, 1.1], follow: 0.95, tint: tintFrom([[1, 1, 1], [0.6, 0.6, 0.6], [1.4, 1.1, 0.8]]) },
     scallop: { tpl: T.scallop, scale: [0.12, 0.2], follow: 0.95, tint: tintFrom([[1, 0.8, 0.7], [1, 0.5, 0.4], [0.9, 0.85, 0.8]]) },
@@ -82,7 +82,7 @@ function specs() {
     cushion: { tpl: T.cushion, scale: [0.18, 0.26], follow: 0.95, sink: 0, tint: tintFrom([[0.9, 0.35, 0.08], [0.85, 0.6, 0.15], [0.7, 0.2, 0.12]]) },
   });
   Object.assign(S, {
-    bendRock: { tpl: [...T.pinnacle, ...T.mound], scale: [1.1, 1.8], follow: 0.2, sink: 0.25, tint: tintFrom([[0.55, 0.52, 0.46]]) },
+    bendRock: { tpl: [...T.pinnacle, ...T.mound], scale: [1.1, 1.8], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.2, sink: 0.25, tint: tintFrom([[0.55, 0.52, 0.46]]) },
     grit: { tpl: T.grit, scale: [0.8, 1.6], follow: 1, sink: 0.01, tint: tintFrom([[1, 0.96, 0.9]], 0.06) },
     algae: { tpl: T.algae, scale: [0.6, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[0.7, 0.8, 0.5], [0.8, 0.7, 0.45]], 0.1) },
   });
@@ -96,7 +96,7 @@ function specs() {
 const meadow = (x, s) => noise2(x / 13, s / 13, 501) * 0.7 + noise2(x / 4.5, s / 4.5, 502) * 0.3;
 
 // grass patches on a jittered grid within [d0, d1] of the path
-function grassField(ctx, fs, inst, rng, d0, d1, step, hgt, minRest) {
+function grassField(ctx, fs, insts, rng, d0, d1, step, hgt, minRest) {
   for (let s = ctx.s0 + step * 0.5; s < ctx.s1; s += step) {
     const w = ctx.weightOf(s, 'seagrass');
     if (w <= 0) continue;
@@ -116,7 +116,7 @@ function grassField(ctx, fs, inst, rng, d0, d1, step, hgt, minRest) {
         const sc = (0.7 + 0.5 * dens) * (0.85 + rng() * 0.3);
         const R = orient(fs.nx, fs.ny, fs.nz, 0.8, rng() * TAU);
         const g = 0.85 + rng() * 0.3, yel = rng() * 0.15;
-        inst.add(x, y - 0.03, -(ss - ctx.s0), R, sc, sc * (0.8 + rng() * 0.5), sc, g * (1 + yel), g * (1 + yel * 0.4), g * (1 - yel * 0.5));
+        insts[(rng() * insts.length) | 0].add(x, y - 0.03, -(ss - ctx.s0), R, sc, sc * (0.8 + rng() * 0.5), sc, g * (1 + yel), g * (1 + yel * 0.4), g * (1 - yel * 0.5));
       }
     }
   }
@@ -126,16 +126,17 @@ function grassField(ctx, fs, inst, rng, d0, d1, step, hgt, minRest) {
 export function layoutGrassNear(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
   const fs = floorSampler(ctx), rng = ctx.rng;
-  const inst = new Inst(T.grassNear, MAT.sway, Math.round(1550 * budgetK(ctx, 'seagrass')));
-  grassField(ctx, fs, inst, rng, 0, 14, 1.0, 0.75);
-  return { extra: [inst], batches: [] };
+  const insts = T.grassNear.map((t) => new Inst(t, MAT.sway, Math.round(560 * budgetK(ctx, 'seagrass'))));
+  grassField(ctx, fs, insts, rng, 0, 14, 1.0, 0.75);
+  if (ctx.addLabel) for (let k = 0; k < 6; k++) { const s = ctx.s0 + rng() * 64, x = ctx.pathX(s) + (rng() - 0.5) * 16; ctx.addLabel('Turtle grass', x, fs.at(x, s) + 0.35, s); }
+  return { extra: insts, batches: [] };
 }
 export function layoutGrassFar(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
   const fs = floorSampler(ctx), rng = ctx.rng;
-  const inst = new Inst(T.grassFar, MAT.sway, Math.round(600 * budgetK(ctx, 'seagrass')));
-  grassField(ctx, fs, inst, rng, 14, 40, 1.8, 0.8);
-  return { extra: [inst], batches: [] };
+  const insts = T.grassFar.map((t) => new Inst(t, MAT.sway, Math.round(320 * budgetK(ctx, 'seagrass'))));
+  grassField(ctx, fs, insts, rng, 14, 40, 1.8, 0.8);
+  return { extra: insts, batches: [] };
 }
 export function layoutSeagrassMisc(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;

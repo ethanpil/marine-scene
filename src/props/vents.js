@@ -2,7 +2,7 @@
 // smoke plumes, tube-worm thickets, mussel beds and bacterial mats. Vent fields are seeded per segment;
 // each chunk instantiates the field members whose centre lies inside it.
 import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK, bendSpots } from './core.js';
-import { musselBed, rockInto } from './shapes.js';
+import { musselBed, rockInto, rockSet } from './shapes.js';
 import { putFloor, pickW, tintFrom, spot, bendX, microDetail } from './scatter.js';
 import { MAT, billboardMesh } from './materials.js';
 import { mulberry32 } from '../noise.js';
@@ -91,14 +91,14 @@ export function initVents() {
   T.worms = [1, 2, 3].map((s) => tubeWorms(s, { n: 26 + s * 6 }));
   T.ventMussels = [1, 2].map((s) => musselBed(60 + s, { n: 60, r: 0.8, col: [0.3, 0.22, 0.1], edge: [0.55, 0.45, 0.22], len: 0.12 }));
   T.mat = [1, 2].map(bacterialMat);
-  T.ventRock = [1, 2, 3].map((s) => { const b = new Builder(); rockInto(b, s + 70, { detail: 3, sy: 0.6, rough: 0.45, growth: 0, col: [0.11, 0.1, 0.1] }); return b.build(); });
+  T.ventRock = rockSet(['volcanic', 'angular'], 4, { detail: 3, growth: 0 });
 }
 
 const S = {};
 function specs() {
   if (S.rock) return S;
   Object.assign(S, {
-    rock: { tpl: T.ventRock, scale: [0.5, 2.2], follow: 0.5, tint: tintFrom([[1, 1, 1], [1.3, 1.1, 0.9]]) },
+    rock: { tpl: T.ventRock, scale: [0.5, 2.2], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.5, tint: tintFrom([[0.25, 0.24, 0.24], [0.32, 0.26, 0.22]]) },
     worms: { tpl: T.worms, scale: [0.7, 1.4], follow: 0.5, sway: true, tint: tintFrom([[1, 1, 1]], 0.1) },
     mussels: { tpl: T.ventMussels, scale: [0.8, 1.6], follow: 0.9, sink: 0.04, tint: tintFrom([[1, 1, 1]], 0.15) },
     mat: { tpl: T.mat, scale: [0.6, 2.2], follow: 1, sink: 0.0, maxSlope: 0.85, tint: tintFrom([[0.9, 0.9, 0.85], [0.85, 0.75, 0.35], [0.85, 0.5, 0.25]], 0.1) },

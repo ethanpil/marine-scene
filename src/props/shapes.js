@@ -150,7 +150,7 @@ export function anemone(seed, { tentacles = 52, tlen = 0.55, rows = 3, body = [0
     const out = [Math.cos(a), 0, Math.sin(a)];
     let d = norm([out[0] * (0.35 + row * 0.25), 1, out[2] * (0.35 + row * 0.25)]);
     let p = [out[0] * rr, height, out[2] * rr];
-    const L = tlen * (0.75 + 0.5 * rng()) * (1 - row * 0.12), pts = [p], radii = [thick];
+    const L = tlen * (0.5 + 0.9 * rng()) * (1 - row * 0.12), pts = [p], radii = [thick * (0.75 + 0.5 * rng())];
     for (let k = 1; k <= 3; k++) {
       d = norm([d[0] + out[0] * 0.45, d[1] - 0.24, d[2] + out[2] * 0.45]);
       p = [p[0] + d[0] * L / 3, p[1] + d[1] * L / 3, p[2] + d[2] * L / 3];
@@ -196,7 +196,7 @@ export function softCoral(seed, { h = 0.8 } = {}) {
   const b = new Builder(), rng = mulberry32(seed);
   const lobes = [];
   branchesInto(b, rng, {
-    depth: 2, len: h * 0.45, rad: h * 0.06, radial: 5, segs: 2, kids: [2, 3], spread: 0.6, up: 0.25, wiggle: 0.35,
+    depth: 1 + Math.floor(rng() * 2.5), len: h * (0.3 + rng() * 0.3), rad: h * 0.06, radial: 5, segs: 2, kids: [1, 4], spread: 0.4 + rng() * 0.5, up: 0.1 + rng() * 0.3, wiggle: 0.3 + rng() * 0.3,
     lenK: 0.6, radK: 0.7, tipK: 0.6, childAt: [0.45, 1], tip: false,
     paint(level, v, x, y, z, o) { const t = sat(y / h); o[3] = o[4] = o[5] = 1.0 + 0.25 * t; o[6] = 0.06 * h * t * t; o[7] = 0; },
     onTip(p) { lobes.push(p); },
@@ -232,14 +232,14 @@ export function leatherCoral(seed) {
 export function seaFan(seed, { h = 1.2 } = {}) {
   const b = new Builder(), rng = mulberry32(seed);
   branchesInto(b, rng, {
-    depth: 3, len: h * 0.34, rad: h * 0.026, radial: 3, segs: 2, kids: [2, 2], spread: 0.6, up: 0.18, wiggle: 0.3,
+    depth: 2 + Math.floor(rng() * 2), len: h * (0.26 + rng() * 0.16), rad: h * 0.026, radial: 3, segs: 2, kids: [1, 3], spread: 0.4 + rng() * 0.45, up: 0.1 + rng() * 0.2, wiggle: 0.3 + rng() * 0.3,
     lenK: 0.78, radK: 0.72, tipK: 0.5, childAt: [0.55, 1], plane: true, curve: 0.08, childRad: 0.9,
     paint(level, v, x, y, z, o) { const t = sat(y / h); o[3] = o[4] = o[5] = 0.55 + 0.45 * t; o[6] = 0.1 * h * Math.pow(t, 1.5); o[7] = 0; },
   });
   // lattice sheet (style 4 => netted by the shader), fan outline with irregular rim
   const W = h * (0.55 + 0.15 * rng());
   b.grid(12, 8, (u, v, i, j, o) => {
-    const a = (u - 0.5) * 2.3, rim = 1 + 0.12 * Math.sin(u * 17 + seed) + 0.08 * Math.sin(u * 7 + seed * 3);
+    const a = (u - 0.5) * (1.6 + (seed % 5) * 0.25), rim = 1 + 0.18 * Math.sin(u * (11 + seed % 9) + seed) + 0.12 * Math.sin(u * 5 + seed * 3);
     const r = h * 0.12 + v * (h * 0.95 - h * 0.12) * rim;
     const x = Math.sin(a) * r * (W / h) * 1.15, y = Math.cos(a) * r * 0.95 + h * 0.05;
     o[0] = x; o[1] = y; o[2] = 0.08 * x * x + 0.01 * Math.sin(x * 9 + y * 7);
@@ -251,7 +251,7 @@ export function seaFan(seed, { h = 1.2 } = {}) {
 export function seaWhips(seed, { n = 5, h = 1.4 } = {}) {
   const b = new Builder(), rng = mulberry32(seed);
   for (let k = 0; k < n; k++) {
-    const L = h * (0.5 + 0.6 * rng()), a = rng() * TAU, lean = 0.15 + rng() * 0.3;
+    const L = h * (0.3 + 0.9 * rng()), a = rng() * TAU, lean = 0.05 + rng() * 0.5;
     let d = norm([Math.cos(a) * lean, 1, Math.sin(a) * lean]), p = [(rng() - 0.5) * 0.06, 0, (rng() - 0.5) * 0.06];
     const pts = [p], radii = [0.016];
     for (let i = 1; i <= 7; i++) {
@@ -315,22 +315,23 @@ export function grassPatch(seed, { n = 16, r = 0.6, h = 0.55, w = 0.022, segs = 
   const b = new Builder(), rng = mulberry32(seed);
   for (let k = 0; k < n; k++) {
     const rr = r * Math.sqrt(rng()), a = rng() * TAU, cx = Math.cos(a) * rr, cz = Math.sin(a) * rr;
-    const L = h * (0.55 + 0.7 * rng()), lean = rng() * TAU, la = 0.1 + rng() * 0.35, face = rng() * TAU;
+    const L = h * (0.3 + 1.2 * Math.pow(rng(), 0.8)), lean = rng() * TAU, la = 0.05 + rng() * 0.5, face = rng() * TAU;
     const lx = Math.cos(lean), lz = Math.sin(lean);
     const fx = Math.cos(face), fz = Math.sin(face); // ribbon width direction
-    const ww = w * (0.7 + 0.6 * rng());
+    const ww = w * (0.5 + 1.1 * rng()), ck = 0.75 + 0.5 * rng(), cy = rng() * 0.25;
     let px = cx, py = 0, pz = cz, ang = la;
     const rows = [];
     for (let i = 0; i <= segs; i++) {
       rows.push([px, py, pz, i / segs]);
-      ang += 0.25 + 0.2 * rng();
+      ang += 0.1 + 0.4 * rng();
       const st = L / segs;
       px += Math.sin(ang) * lx * st; pz += Math.sin(ang) * lz * st; py += Math.cos(ang) * st;
     }
     for (let i = 0; i <= segs; i++) {
       const [x, y, z, t] = rows[i], wt = ww * (i === segs ? 0.25 : 1 - 0.3 * t);
-      const c = t < 0.5 ? [lerp(base[0], mid[0], t * 2), lerp(base[1], mid[1], t * 2), lerp(base[2], mid[2], t * 2)]
+      const c0 = t < 0.5 ? [lerp(base[0], mid[0], t * 2), lerp(base[1], mid[1], t * 2), lerp(base[2], mid[2], t * 2)]
         : [lerp(mid[0], tipc[0], (t - 0.5) * 2), lerp(mid[1], tipc[1], (t - 0.5) * 2), lerp(mid[2], tipc[2], (t - 0.5) * 2)];
+      const c = [c0[0] * ck * (1 + cy), c0[1] * ck, c0[2] * ck * (1 - cy)];
       const sw = sway * L * Math.pow(t, 1.5);
       const nx = -fz * 0.45, nz = fx * 0.45; // normals biased upward for soft lighting
       b.v(x - fx * wt, y, z - fz * wt, nx, 0.9, nz, c[0], c[1], c[2], sw, 2);
@@ -407,4 +408,64 @@ export function algaePatch(seed, { r = 0.8, col = [0.3, 0.38, 0.12] } = {}) {
     o[3] = col[0] * c; o[4] = col[1] * c; o[5] = col[2] * c; o[6] = 0; o[7] = 2;
   }, { wrapU: true, flip: true });
   return b.build();
+}
+
+// ---------- rock library: many distinct shapes + per-rock texture key (static mode 6.x) ----------
+const ROCK_TYPES = {
+  boulder: { col: [1.0, 0.97, 0.92], name: 'Granite boulder' },
+  angular: { col: [1.02, 1.0, 0.97], name: 'Fractured granite' },
+  slab: { col: [1.15, 0.95, 0.72], name: 'Sandstone slab' },
+  pinnacle: { col: [0.92, 0.9, 0.86], name: 'Rock pinnacle' },
+  sediment: { col: [1.12, 0.9, 0.62], name: 'Sedimentary ledge' },
+  volcanic: { col: [0.46, 0.45, 0.47], name: 'Basalt outcrop' },
+  undercut: { col: [1.2, 1.14, 1.0], name: 'Undercut limestone' },
+};
+export const ROCK_TYPE_KEYS = Object.keys(ROCK_TYPES);
+export function rockLib(seed, type, { detail = 3, growth = 0.7 } = {}) {
+  const b = new Builder(), rng = mulberry32(seed * 7919 + type.length);
+  const T0 = ROCK_TYPES[type], ox = rng() * 20;
+  const sx = 0.8 + rng() * 0.5, sz = 0.7 + rng() * 0.5;
+  let sy = { boulder: 0.55 + rng() * 0.35, angular: 0.5 + rng() * 0.5, slab: 0.22 + rng() * 0.15, pinnacle: 1.8 + rng() * 1.4, sediment: 0.6 + rng() * 0.5, volcanic: 0.5 + rng() * 0.4, undercut: 0.7 + rng() * 0.4 }[type];
+  const planes = [];
+  const np = type === 'angular' ? 6 + Math.floor(rng() * 4) : type === 'slab' ? 4 : type === 'pinnacle' ? 3 : 0;
+  for (let k = 0; k < np; k++) {
+    const a = rng() * TAU, e = (rng() - 0.5) * (type === 'slab' ? 0.5 : 1.4);
+    const n = norm([Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e)]);
+    planes.push([n, 0.5 + rng() * 0.35]);
+  }
+  const bandF = 4 + rng() * 5, pitT = 0.35 + rng() * 0.2;
+  b.blob(detail, (x, y, z, o) => {
+    const amp = type === 'boulder' ? 0.32 : type === 'volcanic' ? 0.28 : 0.18;
+    let d = 1 + amp * fbm3(x * 1.1 + ox, y * 1.1, z * 1.1, 3, seed) + 0.07 * vn3(x * 4.5 + ox, y * 4.5, z * 4.5, seed + 3);
+    if (type === 'volcanic') d -= 0.12 * sstep(pitT, pitT + 0.1, vn3(x * 7 + ox, y * 7, z * 7, seed + 5));
+    let p = [x * d, y * d, z * d];
+    for (const [n, c] of planes) { const q = p[0] * n[0] + p[1] * n[1] + p[2] * n[2]; if (q > c) { p = [p[0] - (q - c) * n[0], p[1] - (q - c) * n[1], p[2] - (q - c) * n[2]]; } }
+    if (type === 'sediment') { const band = (p[1] * bandF + 0.4 * vn3(x * 2, y * 2, z * 2, seed)) % 1; const k = 0.9 + 0.1 * sstep(0, 0.2, band < 0 ? band + 1 : band); p[0] *= k; p[2] *= k; }
+    if (type === 'undercut') { const k = 0.55 + 0.45 * sstep(-0.7, 0.25, y); p[0] *= k; p[2] *= k; }
+    if (type === 'pinnacle') { const t = sat((y + 1) / 2); p[0] *= 1 - 0.55 * t; p[2] *= 1 - 0.55 * t; }
+    let px = p[0] * sx, py = p[1] * sy, pz = p[2] * sz;
+    const fl = -0.3 * sy;
+    if (py < fl) py = fl + (py - fl) * 0.12;
+    o[0] = px; o[1] = py - fl; o[2] = pz;
+  });
+  let top = 0;
+  for (let i = 0; i < b.vc; i++) top = Math.max(top, b.P[i * 3 + 1]);
+  const key = 6 + 0.05 + rng() * 0.9;
+  b.paint(0, (i, x, y, z, nx, ny, nz, o) => {
+    const h = sat(y / (top * 0.6 + 1e-3));
+    const ao = (0.4 + 0.6 * sstep(0, 1, h)) * (0.75 + 0.25 * Math.max(0, ny));
+    let c = T0.col;
+    if (type === 'sediment') { const bnd = 0.85 + 0.25 * Math.sin(y * bandF * 6.28 / Math.max(sy, 0.3) + seed); c = [c[0] * bnd, c[1] * (0.95 + 0.1 * bnd), c[2]]; }
+    const v = 0.85 + 0.3 * vn3(x * 2.5, y * 2.5, z * 2.5, seed + 21);
+    o[0] = c[0] * ao * v; o[1] = c[1] * ao * v; o[2] = c[2] * ao * v;
+    o[3] = growth * sstep(0.1, 0.7, ny); o[4] = key;
+  });
+  const t = b.build();
+  t.label = T0.name;
+  return t;
+}
+export function rockSet(types, n, opts) {
+  const out = [];
+  types.forEach((ty, i) => { for (let k = 0; k < n; k++) out.push(rockLib(101 + i * 37 + k * 11, ty, opts)); });
+  return out;
 }

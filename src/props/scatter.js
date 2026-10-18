@@ -19,21 +19,23 @@ export function putAt(ctx, batch, spec, x, y, s, nx, ny, nz, rng, sizeK = 1) {
   let sc = (spec.scale[0] + (spec.scale[1] - spec.scale[0]) * rng()) * sizeK;
   const ys = spec.ys ? spec.ys[0] + (spec.ys[1] - spec.ys[0]) * rng() : 1;
   const minSc = spec.scale[0] * (spec.minK ?? 0.35);
+  const zs = spec.xz ? 1 + (rng() - 0.5) * spec.xz : 1;
   const top = ctx.surfaceY - 0.08;
+  const tilt = spec.tilt || 0;
+  const R = orient(nx, ny, nz, spec.follow ?? 0.6, rng() * TAU, (rng() - 0.5) * tilt, (rng() - 0.5) * tilt);
+  const lean = Math.sqrt(R[1] * R[1] + R[7] * R[7]), up = Math.max(0.2, R[4]); // tilted items reach sideways
   let ok = false;
   for (let t = 0; t < 4; t++) {
     const h = tpl.maxY * sc * ys;
-    if (y + h < top && propClear(ctx, x, s, y, y + h, tpl.r * sc, spec.sway || spec.soft)) { ok = true; break; }
+    if (y + h * up < top && propClear(ctx, x, s, y, y + h * up + tpl.r * sc * lean, tpl.r * sc * Math.max(1, zs) + h * lean, spec.sway || spec.soft)) { ok = true; break; }
     sc *= 0.65;
     if (sc < minSc) break;
   }
   if (!ok) return 0;
-  const tilt = spec.tilt || 0;
-  const R = orient(nx, ny, nz, spec.follow ?? 0.6, rng() * TAU, (rng() - 0.5) * tilt, (rng() - 0.5) * tilt);
   const c = spec.tint ? spec.tint(rng) : [1, 1, 1];
   const sink = (spec.sink ?? 0.04) * sc * ys + (1 - ny) * tpl.r * sc * 0.5;
-  const fa = (spec.sway ? sc : 1) * (spec.fa ?? 1);
-  return batch.add(tpl, x, y - sink, -(s - ctx.s0), R, sc, sc * ys, sc, c[0], c[1], c[2], fa) ? sc : 0;
+  const fa = (spec.sway ? sc : 1) * (spec.fa ?? 1) * (spec.grow ? spec.grow[0] + (spec.grow[1] - spec.grow[0]) * rng() : 1);
+  return batch.add(tpl, x, y - sink, -(s - ctx.s0), R, sc, sc * ys, sc * zs, c[0], c[1], c[2], fa) ? sc : 0;
 }
 
 export function putFloor(ctx, fs, batch, spec, x, s, rng, sizeK = 1) {

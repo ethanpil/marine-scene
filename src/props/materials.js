@@ -110,11 +110,27 @@ if (pMode > 0.5 && pMode < 1.5) {
   float rust = smoothstep(0.42, 0.7, st * 0.7 + st2 * 0.5 + pA.b * 0.3);
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.17, 0.06) * (0.6 + 0.6 * pB.r), rust * 0.85);
   pH = pB.r * 0.7 + rust * 0.3;
-} else if (pMode > 4.5) {
+} else if (pMode > 4.5 && pMode < 5.5) {
   diffuseColor.rgb *= 0.9 + 0.2 * pB.g;
   pBumpK = 0.05;
+} else if (pMode > 5.5) {
+  // rock / dressed stone: per-template texture key picks scale, offset and channel mix
+  float rk = fract(pMode);
+  float P = rk < 0.33 ? 2.0 : (rk < 0.66 ? 4.0 : 8.0);
+  vec4 r1 = pTri(vWPos + vec3(rk * 13.0, rk * 5.0, rk * 7.0), pW, P);
+  vec3 mw = vec3(fract(rk * 3.1), fract(rk * 5.7), fract(rk * 7.3)) + 0.1;
+  float n = dot(r1.rgb, mw) / (mw.x + mw.y + mw.z);
+  diffuseColor.rgb *= 0.6 + 0.8 * n;
+  float sp = step(0.7, pB.b) * step(fract(rk * 11.0), 0.45);           // granite speckle
+  diffuseColor.rgb *= 1.0 + sp * 0.35 - step(pB.a, 0.18) * 0.2;
+  float band = sin(vWPos.y * (5.0 + rk * 12.0) + r1.r * 5.0);         // strata
+  diffuseColor.rgb *= 1.0 - step(0.55, fract(rk * 2.3)) * 0.13 * band;
+  float crack = smoothstep(0.9, 0.975, pTri(vWPos + vec3(rk * 3.0), pW, 2.0).a);
+  diffuseColor.rgb *= 1.0 - crack * 0.6;
+  pH = n * 0.8 - crack * 0.7 + pB.g * 0.2;
+  pBumpK = 0.055;
 }
-if (pMode < 2.5 || (pMode > 3.5 && pMode < 4.5)) {
+if (pMode < 2.5 || (pMode > 3.5 && pMode < 4.5) || pMode > 5.5) {
   // encrusting growth (algae, coralline, sponges) on up-facing surfaces
   float g = vFx.x * smoothstep(-0.15, 0.6, pN.y + (pA.b - 0.5) * 0.9) * smoothstep(0.4, 0.62, pA.a * 0.75 + pB.b * 0.45);
   g = clamp(g, 0.0, 1.0);
@@ -135,7 +151,7 @@ const EMISSIVE_STATIC = /* glsl */`
 if (pMode > 2.5 && pMode < 3.5) {
   float fl = 0.78 + 0.22 * sin(uTime * 2.1 + vWPos.y * 2.7 + pA.r * 9.0);
   totalEmissiveRadiance += vec3(1.0, 0.22, 0.03) * vFx.x * fl * (0.35 + 1.2 * pB.r * pB.r) * 1.6;
-} else if (pMode > 4.5) {
+} else if (pMode > 4.5 && pMode < 5.5) {
   float dB = max(0.0, uSurfaceY - vWPos.y);
   totalEmissiveRadiance += vec3(0.22, 0.52, 0.66) * uSunColor * uSunScatter * exp(-uLightSigma * dB * 0.5) * (0.9 + 1.8 * pB.r + 1.2 * smoothstep(-4.0, -0.8, vWPos.y)) * vFx.x;
 }
@@ -143,8 +159,8 @@ if (pMode > 2.5 && pMode < 3.5) {
 
 const ROUGH_STATIC = /* glsl */`
 #include <roughnessmap_fragment>
-if (pMode > 4.5) roughnessFactor = 0.3;
-else if (pMode > 3.5) roughnessFactor = 0.7;
+if (pMode > 4.5 && pMode < 5.5) roughnessFactor = 0.3;
+else if (pMode > 3.5 && pMode < 4.5) roughnessFactor = 0.7;
 `;
 
 // style 4: gorgonian fan sheet cut into a net with ridged noise

@@ -58,7 +58,7 @@ function specs() {
     soft: { tpl: T.soft, scale: [0.8, 1.5], follow: 0.4, sway: true, tint: tintFrom([[0.8, 0.4, 0.35], [0.8, 0.75, 0.7]]) },
     anem: { tpl: T.anem, scale: [0.9, 1.5], follow: 0.7, sway: true, tint: tintFrom([[0.9, 0.9, 0.9]]) },
     star: { tpl: T.star, scale: [0.15, 0.3], follow: 1, sink: 0, tint: tintFrom([[0.9, 0.3, 0.1], [0.8, 0.6, 0.2]]) },
-    rock: { tpl: T.rocks, scale: [0.6, 2], follow: 0.5, tint: tintFrom([[0.35, 0.35, 0.36]]) },
+    rock: { tpl: T.rocks, scale: [0.6, 2], ys: [0.7, 1.35], xz: 0.5, grow: [0.1, 1.5], follow: 0.5, tint: tintFrom([[0.35, 0.35, 0.36]]) },
   });
   S.list = [{ w: 2, k: 'sponge' }, { w: 1.4, k: 'soft', sway: true }, { w: 1.4, k: 'anem', sway: true }, { w: 1, k: 'star' }, { w: 1.5, k: 'rock' }];
   return S;
@@ -101,7 +101,7 @@ export function layoutPolar(ctx) {
     const c = ctx.ceilingAt(p.x, p.s);
     if (c > ctx.surfaceY - 0.4) continue;
     const tpl = rng.pick(T.keel), sc = 0.7 + rng() * 0.7, yaw = rng() * TAU, R = rotY(yaw);
-    const pts = placedPoints(tpl, p.x, c + 0.4, p.s, R, sc, sc, sc, 120);
+    const pts = placedPoints(tpl, p.x, c + 0.4, p.s, R, sc, sc * 1.4, sc, 2000);
     if (!pointsClear(ctx, pts, 0.6)) continue;
     st.add(tpl, p.x, c + 0.4, -(p.s - ctx.s0), R, sc, sc * (0.8 + rng() * 0.6), sc, 1, 1, 1, 1);
   }
