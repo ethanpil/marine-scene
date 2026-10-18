@@ -33,6 +33,7 @@ export class CameraDirector {
     this.evalTimer = 0;
     this.cooldown = new Map();    // id -> seconds remaining
     this.cands = []; this.pois = [];
+    this.seen = new Set();        // set pieces already watched once (rare ones get a novelty boost)
     this.focusPos = new THREE.Vector3();
     this.hasSubject = false;
     this._f = new THREE.Vector3(); this._d = new THREE.Vector3(); this._up = new THREE.Vector3(0, 1, 0);
@@ -46,8 +47,11 @@ export class CameraDirector {
     if (poisFn) {
       poisFn(s + 6, s + 70, this.pois);
       for (const p of this.pois) {
-        c.push({ id: 'poi:' + p.type + ':' + Math.round(p.x) + ':' + Math.round(p.s), x: p.x, y: p.y + Math.min(2.5, (p.r || 3) * 0.3),
-          z: -p.s, vx: 0, vy: 0, vz: 0, r: p.r || 3, interest: POI_INTEREST[p.type] ?? 0.4, poi: true });
+        const id = 'poi:' + p.type + ':' + Math.round(p.x) + ':' + Math.round(p.s);
+        const base = POI_INTEREST[p.type] ?? 0.4;
+        // a rare set piece seen for the first time beats almost anything else
+        const interest = base >= 0.7 && !this.seen.has(id) ? Math.min(1.6, base * 1.7) : base;
+        c.push({ id, x: p.x, y: p.y + Math.min(2.5, (p.r || 3) * 0.3), z: -p.s, vx: 0, vy: 0, vz: 0, r: p.r || 3, interest, poi: true });
       }
     }
     const maxD = Math.min(60, 2.6 / Math.max(0.01, sigmaG));
@@ -57,9 +61,9 @@ export class CameraDirector {
       const d = Math.hypot(dx, dy, dz);
       if (d < 3.5 || d > maxD) continue;
       const cosA = (dx * F.x + dy * F.y + dz * F.z) / d;
-      if (cosA < 0.25) continue;                                 // > ~75 degrees off the path heading
+      if (cosA < (e.poi ? 0.08 : 0.25)) continue;                // too far off the path heading (POIs may be wider)
       if (this.cooldown.has(e.id)) continue;
-      const ang = Math.pow(clamp((cosA - 0.25) / 0.75, 0, 1), 1.2);
+      const ang = Math.pow(clamp((cosA - (e.poi ? 0.08 : 0.25)) / (e.poi ? 0.92 : 0.75), 0, 1), e.poi ? 0.8 : 1.2);
       const vis = Math.exp(-sigmaG * d * 0.7);
       const size = 0.55 + 0.45 * clamp(e.r / 1.5, 0, 1);
       const sc = e.interest * ang * vis * size;
@@ -112,6 +116,8 @@ export class CameraDirector {
     }
     if (this.subject) {
       this.watchTime += dt;
+      if (this.subject.poi && this.watchTime > 3) this.seen.add(this.subject.id);
+      if (this.seen.size > 400) this.seen.clear();
       if (this.watchTime > 14) { this.cooldown.set(this.subject.id, 35); this.subject = null; this.watchTime = 0; }
     }
 

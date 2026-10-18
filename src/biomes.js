@@ -1,6 +1,6 @@
 // Biome catalogue + endless seeded sequence along the travel distance `s` (metres).
 // Each biome defines water optics, camera depth and a terrain shape relative to the path.
-import { mulberry32, noise1, noise2, fbm2, ridge2, worley2, smoothstep, hash1, hash2i } from './noise.js';
+import { mulberry32, noise1, noise2, fbm2, ridge2, smoothstep, hash1 } from './noise.js';
 
 const C = (hex) => [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
 
@@ -157,9 +157,7 @@ export const BIOMES = {
     // soft sediment with occasional brine-pool basins (see brineBasins below)
     floor(x, s, ad, g) {
       const base = fbm2(x / 50, s / 50, 3, 161) * 2.5 + fbm2(x / 9, s / 9, 2, 162) * 0.3;
-      const w = worley2(x / BASIN, s / BASIN, basinSeed(g));
-      const basin = -smoothstep(0.32, 0.12, w) * (2.5 + 1.5 * sv(g, 2)) * (sv(g, 3) < 0.7 ? 1 : 0);
-      return base + basin + smoothstep(50, 110, ad) * 6;
+      return base + basinDepth(g, x, s) + smoothstep(50, 110, ad) * 6;
     },
   },
   tidepool: {
@@ -200,21 +198,42 @@ for (const b of Object.values(BIOMES)) for (const k of ['deep', 'up', 'sand', 'r
 export const BIOME_KEYS = Object.keys(BIOMES);
 const NO_CEIL = 60; // metres above the surface: "no ceiling" for open-water biomes
 
-// ---------- Brine-pool basins (deepplain): worley cells of size BASIN ----------
-const BASIN = 45;
-const basinSeed = (g) => 163 + ((g ? g.seed : 0) & 7);
-// Basin centres (global x, s) with radius r (m) overlapping [s0, s1] x [x0, x1] for segment g.
-// The flat-bottomed depression has full depth within ~0.12*BASIN and its rim at ~0.32*BASIN.
-export function brineBasins(g, x0, x1, s0, s1) {
+// ---------- Brine-pool basins (deepplain): rare set pieces, 1-2 per segment, near the path ----------
+// The camera path's lateral position (same formula as WorldShape.pathX), so basins can sit beside it.
+export const pathXAt = (s) => 30 * noise1(s / 260, 3) + 9 * noise1(s / 85, 5) + 3.5 * noise1(s / 38, 9);
+function basinsOf(g) {
+  if (!g || g.key !== 'deepplain') return [];
+  if (g._basins) return g._basins;
   const out = [];
-  if (!g || g.key !== 'deepplain' || sv(g, 3) >= 0.7) return out;
-  const seed = basinSeed(g);
-  for (let cy = Math.floor(s0 / BASIN) - 1; cy <= Math.floor(s1 / BASIN) + 1; cy++)
-    for (let cx = Math.floor(x0 / BASIN) - 1; cx <= Math.floor(x1 / BASIN) + 1; cx++) {
-      const px = (cx + hash2i(cx, cy, seed)) * BASIN, ps = (cy + hash2i(cx, cy, seed + 7)) * BASIN;
-      if (ps >= s0 && ps < s1 && px >= x0 && px < x1) out.push({ x: px, s: ps, r: 0.32 * BASIN, rFlat: 0.12 * BASIN });
+  if (sv(g, 3) < 0.75) {
+    const n = sv(g, 4) < 0.35 ? 2 : 1, len = g.end - g.start;
+    for (let k = 0; k < n; k++) {
+      const s = g.start + len * (0.25 + 0.5 * ((k + sv(g, 5 + k)) / n));
+      const side = sv(g, 7 + k) < 0.5 ? -1 : 1;
+      const r = 10 + 7 * sv(g, 9 + k);
+      const x = pathXAt(s) + side * (r * 0.35 + 4 + 14 * sv(g, 11 + k)); // often partly under the path
+      out.push({ x, s, r, rFlat: r * 0.4, depth: 2.5 + 1.5 * sv(g, 13 + k), seed: (g.seed + k * 977) | 0 });
     }
+  }
+  g._basins = out;
   return out;
+}
+// Depression depth (<= 0) at (x, s): irregular, flat-bottomed basins with soft rims.
+function basinDepth(g, x, s) {
+  let h = 0;
+  for (const b of basinsOf(g)) {
+    const dx = x - b.x, ds = s - b.s;
+    if (Math.abs(dx) > b.r * 1.4 || Math.abs(ds) > b.r * 1.4) continue;
+    // radius noise sampled on a circle, so the rim has no seam at +-pi
+    const d = Math.hypot(dx, ds) || 1e-6, cx = dx / d, cs = ds / d;
+    const rr = b.r * (1 + 0.16 * noise2(cx * 1.4, cs * 1.4, b.seed) + 0.08 * noise2(cx * 3.2 + 7, cs * 3.2, b.seed + 1));
+    h = Math.min(h, -b.depth * smoothstep(rr, rr * 0.4, d));
+  }
+  return h;
+}
+// Basin centres (global x, s) with radius r (m) overlapping [s0, s1] x [x0, x1] for segment g.
+export function brineBasins(g, x0, x1, s0, s1) {
+  return basinsOf(g).filter((b) => b.s >= s0 && b.s < s1 && b.x >= x0 && b.x < x1);
 }
 
 // ---------- Endless sequence ----------
@@ -284,7 +303,7 @@ export class WorldShape {
     // Optional fast exact samplers over the built terrain meshes (set by Terrain).
     this.gridFloor = null; this.gridCeil = null;
   }
-  pathX(s) { return 30 * noise1(s / 260, 3) + 9 * noise1(s / 85, 5) + 3.5 * noise1(s / 38, 9); }
+  pathX(s) { return pathXAt(s); }
   // Signed lateral curvature d2x/ds2 (+ = bending toward +x). Tall obstacles placed on the
   // OUTSIDE of a bend (offset opposite the sign) appear dead ahead and the camera curves around them.
   pathCurv(s) { const e = 6; return (this.pathX(s + e) - 2 * this.pathX(s) + this.pathX(s - e)) / (e * e); }
