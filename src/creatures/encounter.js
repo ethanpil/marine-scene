@@ -4,6 +4,17 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../noise.js';
 import { buildSpecies } from './build.js';
+import { Obstacles } from '../obstacles.js';
+
+const _n = { x: 0, y: 0, s: 0 };
+const _hit = { nx: 0, ny: 1, nz: 0 };   // outward normal of the closest obstacle (render-relative x, y, z)
+const _q = [];
+// coarse bounds per obstacle (cached on the object) for cheap rejection before the exact distance
+function obsBox(o) {
+  if (o._bb) return o._bb;
+  const r = o.r;
+  return (o._bb = [Math.min(o.ax, o.bx) - r, Math.max(o.ax, o.bx) + r, Math.min(o.ay, o.by) - r, Math.max(o.ay, o.by) + r, Math.min(o.as, o.bs) - r, Math.max(o.as, o.bs) + r]);
+}
 
 const TAU = Math.PI * 2, PH_WRAP = 200 * Math.PI;
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -21,8 +32,18 @@ export class GeoCache {
     let e = this.map.get(sp.key);
     if (e) { this.map.delete(sp.key); this.map.set(sp.key, e); } else {
       const g = buildSpecies(sp);
+      // body radius (unit length) from the body / shell vertices: used for obstacle clearance
+      let br = 0;
+      for (let v = 0, nv = g.pos.length / 3; v < nv; v++) {
+        const part = g.g[v * 4];
+        if (part === 0 || part === 10 || (part === 6 && sp.plan === 'octopus')) {
+          const r = Math.hypot(g.pos[v * 3], g.pos[v * 3 + 1] * (sp.plan === 'jelly' ? 0.5 : 1));
+          if (r > br) br = r;
+        }
+      }
+      if (sp.plan === 'octopus') br *= 0.75; // arms drape over things a little
       e = {
-        key: sp.key, refs: 0, tris: g.tris,
+        key: sp.key, refs: 0, tris: g.tris, bodyR: Math.min(br, 1.2),
         index: new THREE.BufferAttribute(g.idx, 1), pos: new THREE.BufferAttribute(g.pos, 3),
         nor: new THREE.BufferAttribute(g.nor, 3), g: new THREE.BufferAttribute(g.g, 4),
       };
@@ -148,6 +169,10 @@ export class Encounter {
     this.hardR = 2.6 + this.baseSize * (sp.plan === 'jelly' ? 1.5 : 0.55);
     this.rr = 0;
     this.bounds = { x: 0, y: 0, z: 0, r: 1 };
+    this.obs = []; this.obsFrame = Math.floor(rng() * 3); // staggered refresh across groups
+    this.rbU = this.entry.bodyR || 0.2;
+    this.elong = !['jelly', 'octopus', 'seahorse'].includes(sp.plan);
+    this.worstPen = 0;
     this.matrixDirty = true;
     this._init(plan);
   }
@@ -245,7 +270,7 @@ export class Encounter {
       const ca = rng() * TAU; this.curDir = [Math.cos(ca), 0, Math.sin(ca)];
       for (let i = 0; i < n; i++) {
         const a = rng() * TAU, r = Math.sqrt(rng()) * spread;
-        const x = x0 + Math.cos(a) * r, z = z0 + Math.sin(a) * r;
+        const [x, z] = this._freeSpot(x0 + Math.cos(a) * r, z0 + Math.sin(a) * r, 0.06, true);
         const s = -(z + this.anchorZ);
         SL[i * 4] = x; SL[i * 4 + 1] = sh.floorAt(x, s) - 0.02; SL[i * 4 + 2] = z;
         SL[i * 4 + 3] = 0.35 + 0.35 * rng();
@@ -260,7 +285,20 @@ export class Encounter {
           const nn = sh.floorNormal(x, s), steep = 1 - nn.y;
           if (!best || steep > best.steep) best = { x, z, s, nn, steep };
         }
-        const nn = best.nn;
+        let nn = best.nn;
+        const reg = this.sys.env && this.sys.env.obstacles;
+        if (reg && reg.count) { // prefer the foot of a nearby rock: emerge beside it, facing out
+          reg.query(best.x, best.s, 6, _q);
+          let bo = null, bd = 1e9;
+          for (const o of _q) { const d = Obstacles.dist(o, best.x, sh.floorAt(best.x, best.s), best.s, _n); if (d < bd) { bd = d; bo = o; } }
+          if (bo) {
+            const fy = sh.floorAt(best.x, best.s); Obstacles.dist(bo, best.x, fy, best.s, _n);
+            const h = Math.hypot(_n.x, _n.s) || 1, ox = _n.x / h, os = _n.s / h;
+            const bx = best.x - ox * (bd - 0.12), bs = best.s - os * (bd - 0.12); // just outside the rock surface
+            best.x = bx; best.s = bs; best.z = -bs - this.anchorZ;
+            nn = { x: ox, y: 0.3, z: -os };
+          }
+        }
         let zx = nn.x * 0.9, zy = 0.55 + nn.y * 0.3, zz = nn.z * 0.9;
         if (Math.hypot(zx, zz) < 0.15) { const a = rng() * TAU; zx = Math.cos(a) * 0.6; zz = Math.sin(a) * 0.6; }
         const l = Math.hypot(zx, zy, zz); zx /= l; zy /= l; zz /= l;
@@ -272,7 +310,8 @@ export class Encounter {
       const spread = beh.spread ?? 3;
       this.NRM = new Float32Array(n * 3); this.HOME = new Float32Array(n * 2);
       for (let i = 0; i < n; i++) {
-        const x = x0 + (rng() - 0.5) * spread, z = z0 + (rng() - 0.5) * spread * 1.4, s = -(z + this.anchorZ);
+        const [x, z] = this._freeSpot(x0 + (rng() - 0.5) * spread, z0 + (rng() - 0.5) * spread * 1.4, this.rbU * this.SZ[i] + 0.1, true);
+        const s = -(z + this.anchorZ);
         const nn = sh.floorNormal(x, s), a = rng() * TAU;
         P[i * 3] = x; P[i * 3 + 1] = sh.floorAt(x, s) + this._restLift(i); P[i * 3 + 2] = z;
         this.NRM[i * 3] = nn.x; this.NRM[i * 3 + 1] = nn.y; this.NRM[i * 3 + 2] = nn.z;
@@ -288,6 +327,87 @@ export class Encounter {
     this._writeAll(0);
   }
 
+  // ---------- obstacles ----------
+  _obsRefresh() {
+    const reg = this.sys.env && this.sys.env.obstacles;
+    if (!reg || !reg.count) { this.obs.length = 0; return; }
+    if (this.obsFrame++ % 3 !== 0 && this.obsValid) return;
+    const b = this.bounds, look = 3 + this.speed * 2.5 + this.baseSize;
+    const R = b.r + look + 2, bs = -(this.anchorZ + b.z);
+    reg.query(b.x, bs, R, this.obs);
+    this.obsValid = true;
+    // bucket the short list into a small grid over the group so each instance only tests nearby obstacles
+    const obs = this.obs, G = this.obsGrid || (this.obsGrid = { cells: [], n: 0, x0: 0, s0: 0, cs: 4 });
+    if (obs.length <= 10) { G.n = 0; return; }
+    const cs = 4, nn = Math.min(16, Math.ceil((2 * R) / cs));
+    G.n = nn; G.cs = (2 * R) / nn; G.x0 = b.x - R; G.s0 = bs - R;
+    for (let k = 0; k < nn * nn; k++) { if (G.cells[k]) G.cells[k].length = 0; else G.cells[k] = []; }
+    const m = 2 + this.rbU * this.baseSize;
+    for (const o of obs) {
+      const bb = obsBox(o);
+      const i0 = Math.max(0, Math.floor((bb[0] - m - G.x0) / G.cs)), i1 = Math.min(nn - 1, Math.floor((bb[1] + m - G.x0) / G.cs));
+      const j0 = Math.max(0, Math.floor((bb[4] - m - G.s0) / G.cs)), j1 = Math.min(nn - 1, Math.floor((bb[5] + m - G.s0) / G.cs));
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) G.cells[j * nn + i].push(o);
+    }
+  }
+  _obsList(x, z) {
+    const G = this.obsGrid;
+    if (!G || !G.n) return this.obs;
+    const i = Math.floor((x - G.x0) / G.cs), j = Math.floor((-(z + this.anchorZ) - G.s0) / G.cs);
+    if (i < 0 || j < 0 || i >= G.n || j >= G.n) return this.obs;
+    return G.cells[j * G.n + i];
+  }
+  // Signed clearance of instance i's body (1 or 3 spheres along the heading) at (px,py,pz), relative
+  // coordinates. Writes the closest obstacle's outward normal into _hit. Large value when clear.
+  _clear(i, px, py, pz, pts = 3, list = this.obs) {
+    if (!list.length) return 1e9;
+    const sz = this.SZ[i], rb = this.rbU * sz + 0.05 + 0.03 * sz, F = this.F, i3 = i * 3;
+    const half = sz * 0.42, el = this.elong && pts > 1 && half > rb * 1.5;
+    let best = 1e9;
+    for (let k = el ? -1 : 0; k <= (el ? 1 : 0); k++) {
+      const off = k === 1 ? half : k === -1 ? -half * 0.85 : 0, rr = k === 0 ? rb : rb * 0.75;
+      const qx = px + F[i3] * off, qy = py + F[i3 + 1] * off, qz = pz + F[i3 + 2] * off, qs = -(qz + this.anchorZ);
+      const m = rr + 1.5;
+      for (let j = 0; j < list.length; j++) {
+        const o = list[j], bb = obsBox(o);
+        if (qx < bb[0] - m || qx > bb[1] + m || qy < bb[2] - m || qy > bb[3] + m || qs < bb[4] - m || qs > bb[5] + m) continue;
+        const d = Obstacles.dist(o, qx, qy, qs, _n) - rr;
+        if (d < best) { best = d; _hit.nx = _n.x; _hit.ny = _n.y; _hit.nz = -_n.s; }
+      }
+    }
+    return best;
+  }
+  // Last-resort correction: push out along the normal (small, since steering looks ahead).
+  _pushOut(i, P, V) {
+    const i3 = i * 3, L = this._obsList(P[i3], P[i3 + 2]);
+    if (!L.length) return;
+    // cheap early-out: if the centre sphere clears by more than the half length, no part of the body can touch
+    if (this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 1, L) > (this.elong ? this.SZ[i] * 0.45 : 0) + 0.02) return;
+    for (let it = 0; it < 3; it++) {
+      const d = this._clear(i, P[i3], P[i3 + 1], P[i3 + 2], 3, L);
+      if (d >= 0) return;
+      P[i3] -= _hit.nx * d; P[i3 + 1] -= _hit.ny * d; P[i3 + 2] -= _hit.nz * d;
+      if (V) { const vn = V[i3] * _hit.nx + V[i3 + 1] * _hit.ny + V[i3 + 2] * _hit.nz; if (vn < 0) { V[i3] -= vn * _hit.nx; V[i3 + 1] -= vn * _hit.ny; V[i3 + 2] -= vn * _hit.nz; } }
+    }
+  }
+  // Move a point (relative coords) out of nearby obstacles horizontally, keeping it on the floor.
+  _freeSpot(x, z, rad, onFloor) {
+    const reg = this.sys.env && this.sys.env.obstacles, sh = this.sys.shape;
+    if (!reg || !reg.count) return [x, z];
+    for (let it = 0; it < 4; it++) {
+      const s = -(z + this.anchorZ), y = onFloor ? sh.floorAt(x, s) + rad * 0.5 : 0;
+      reg.query(x, s, rad + 4, _q);
+      let worst = 0, nx = 0, nz = 0;
+      for (const o of _q) {
+        const d = Obstacles.dist(o, x, y, s, _n) - rad - 0.1;
+        if (d < worst) { worst = d; const h = Math.hypot(_n.x, _n.s) || 1; nx = _n.x / h; nz = -_n.s / h; if (h < 0.2) { nx = 1; nz = 0; } }
+      }
+      if (worst >= 0) break;
+      x -= nx * worst; z -= nz * worst;
+    }
+    return [x, z];
+  }
+
   _restLift(i) { return this.sp.plan === 'octopus' ? 0.01 * this.SZ[i] : this.SZ[i] * (this.bankBase ? 0.015 : 0.025); }
 
   _setHome(i, x, z, alt, plan) {
@@ -296,6 +416,17 @@ export class Encounter {
     let y = this.zone === 'mid' ? sh.pathY(s) + (plan?.h0 ?? 0) + alt * 0.3 : fl + alt;
     const lo = fl + this.mFloor * 0.6, hi = Math.min(ce - this.mCeil, this.surfY);
     y = hi > lo ? clamp(y, lo, hi) : (lo + hi) * 0.5;
+    const reg = this.sys.env && this.sys.env.obstacles;
+    if (reg && reg.count) { // homes are never inside rocks: move up / out along the surface normal
+      const rad = this.rbU * this.baseSize + 0.3;
+      reg.query(x, s, rad + 4, _q);
+      for (let it = 0; it < 3; it++) {
+        let worst = 0, nx = 0, ny = 0, nz = 0;
+        for (const o of _q) { const d = Obstacles.dist(o, x, y, -(z + this.anchorZ), _n) - rad; if (d < worst) { worst = d; nx = _n.x; ny = _n.y; nz = -_n.s; } }
+        if (worst >= 0) break;
+        x -= nx * worst; y -= ny * worst; z -= nz * worst;
+      }
+    }
     const o = i * 4; this.SL[o] = x; this.SL[o + 1] = y; this.SL[o + 2] = z;
     this.FLO[i] = lo; this.CEI[i] = hi;
   }
@@ -348,6 +479,7 @@ export class Encounter {
     if (this.plan.fadeIn && !this.dying) this.fade = Math.min(1, this.fade + dt * 0.5);
     if (this.dying) { this.fade -= dt * 0.6; if (this.fade <= 0) { this.done = true; return; } }
     const k = this.kind;
+    if (k !== 'colony' && k !== 'peek') this._obsRefresh();
     if (FLOCK_KINDS.has(k)) { this._leader(dt, c); this._steer(dt, c, true); }
     else if (k === 'shoal' || k === 'hover') this._steer(dt, c, false);
     else if (k === 'drift') this._drift(dt, c);
@@ -424,6 +556,14 @@ export class Encounter {
     const s = this.ls, x = sh.pathX(s) + this.ll + wl;
     const fl = sh.floorAt(x, s), ce = Math.min(sh.ceilingAt(x, s), 0);
     this.lFloor = fl; this.lCeil = ce;
+    if (this.obs.length) {
+      const rl = this.rbU * this.baseSize + Math.min((this.R || 0) * 0.5, 2) + 0.6;
+      const yy = this.Cy;
+      for (let j = 0; j < this.obs.length; j++) {
+        const d = Obstacles.dist(this.obs[j], x, yy, s + this.vs * 1.5, _n) - rl;
+        if (d < 1.5) { const k3 = (1.5 - d) * Math.min(1, dt * 1.2); this.ll += _n.x * k3; this.evH += Math.max(_n.y, 0.35) * k3; }
+      }
+    }
     const y = this._zoneY(x, s, fl, ce, wh + this.evH);
     const ny = this.Cy + (y - this.Cy) * (1 - Math.exp(-dt * 0.9));
     const nz = -s - this.anchorZ;
@@ -497,6 +637,16 @@ export class Encounter {
       let ex = px - (cx + sgx * tq), ey = py - py2, ez = pz - (cz + sgz * tq);
       let ed = Math.hypot(ex, ey, ez);
       const STL = this.STL;
+      const OL = this.obs.length ? this._obsList(px, pz) : this.obs;
+      if (OL.length && (n < 40 || ((i + this.obsFrame) & 1) === 0)) { // look ahead along the velocity: around, and over low rocks
+        const T = 0.8 + this.SZ[i] * 0.2;
+        const dA = Math.min(this._clear(i, px + V[i3] * T, py + V[i3 + 1] * T, pz + V[i3 + 2] * T, flock && n > 30 ? 1 : 3, OL), this._clear(i, px, py, pz, 1, OL) + 0.2);
+        const thr = 0.7 + this.SZ[i] * 0.6;
+        if (dA < thr) {
+          const k4 = (thr - dA) / thr * (maxS + 1.2) * 1.6;
+          dvx += _hit.nx * k4; dvy += (_hit.ny > -0.3 ? _hit.ny + 0.35 : _hit.ny) * k4; dvz += _hit.nz * k4;
+        }
+      }
       if (ed < avR && ed > 1e-4) {
         const push = (avR - ed) / avR * (2.5 + spd0 * 2) * (flock ? 1.6 : 2.4) * (1 + STL[i]);
         dvx += ex / ed * push; dvy += ey / ed * push * 0.7; dvz += ez / ed * push;
@@ -529,6 +679,7 @@ export class Encounter {
       }
       V[i3] = vx; V[i3 + 1] = vy; V[i3 + 2] = vz;
       P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
+      if (this.obs.length) this._pushOut(i, P, V);
       if (kind === 'bait' || kind === 'mill') // a drifting ball: fish face their milling direction, not the drift
         this._orient(i, dt, vx - this.Cvx * 0.85, vy - this.Cvy * 0.85, vz - this.Cvz * 0.85);
       else this._orient(i, dt, vx, vy, vz);
@@ -617,9 +768,18 @@ export class Encounter {
       const ex = nx - cx, ey = ny - cy, ez = nz - cz, ed = Math.hypot(ex, ey, ez), hr = this.hardR;
       if (ed < hr && ed > 1e-4) { nx = cx + ex / ed * hr; ny = cy + ey / ed * hr; nz = cz + ez / ed * hr; }
       V[i3] = vx; V[i3 + 1] = vy; V[i3 + 2] = vz; P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
+      if (this.obs.length) {
+        const dA = this._clear(i, nx + vx, ny + vy, nz + vz);
+        if (dA < 0.8) { V[i3] += _hit.nx * (0.8 - dA) * dt * 4; V[i3 + 1] += Math.max(_hit.ny, 0.4) * (0.8 - dA) * dt * 4; V[i3 + 2] += _hit.nz * (0.8 - dA) * dt * 4; }
+        this._pushOut(i, P, V);
+      }
       this.STL[i] = Math.max(0, this.STL[i] - dt * 0.3);
       TMR[i] -= dt;
-      if (MODE[i] === 1 && (TMR[i] < 0 || dl < 1)) { MODE[i] = 2; this.HOME[i * 2] = nx + vx * 1.5; this.HOME[i * 2 + 1] = nz + vz * 1.5; }
+      if (MODE[i] === 1 && (TMR[i] < 0 || dl < 1)) {
+        MODE[i] = 2;
+        const [hx, hz] = this._freeSpot(nx + vx * 1.5, nz + vz * 1.5, this.rbU * this.SZ[i] + 0.1, true); // settle beside rocks
+        this.HOME[i * 2] = hx; this.HOME[i * 2 + 1] = hz;
+      }
       if (MODE[i] === 2 && ny <= fl + this._restLift(i) + 0.05 && dc > SL[o + 3] * 0.8) { MODE[i] = 0; P[i3 + 1] = fl + this._restLift(i); }
       this._orient(i, dt, vx, vy, vz);
     }
@@ -640,7 +800,8 @@ export class Encounter {
       TMR[i] -= dt;
       if (MODE[i] === 0) {
         const w = this.age * 0.05 + this.RP[o] * TAU;
-        const tx = HOME[i * 2] + Math.sin(w) * 1.5, tz = HOME[i * 2 + 1] + Math.cos(w * 0.8) * 1.5;
+        let tx = HOME[i * 2] + Math.sin(w) * 1.5, tz = HOME[i * 2 + 1] + Math.cos(w * 0.8) * 1.5;
+        if (this.obs.length && this._clear(i, tx, py, tz, 1) < 0.1) { tx = px; tz = pz; } // don't crawl into rocks
         let dx = tx - px, dz = tz - pz; const dl = Math.hypot(dx, dz) || 1;
         const spd = this.speed * (0.5 + 0.5 * Math.max(0, Math.sin(this.age * 0.6 + this.RP[o + 1] * 9)));
         V[i3] = dx / dl * spd; V[i3 + 2] = dz / dl * spd; V[i3 + 1] = 0;
@@ -673,6 +834,7 @@ export class Encounter {
         if (ed < hr && ed > 1e-4) { nx = cx + ex / ed * hr; ny = cy + ey / ed * hr; nz = cz + ez / ed * hr; }
         P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
       }
+      if (this.obs.length) this._pushOut(i, P, V);
       const hv = Math.hypot(V[i3], V[i3 + 2]);
       if (hv > 0.03) { const k = Math.min(1, dt * 2); F[i3] += (V[i3] / hv - F[i3]) * k; F[i3 + 2] += (V[i3 + 2] / hv - F[i3 + 2]) * k; const l = Math.hypot(F[i3], F[i3 + 2]) || 1; F[i3] /= l; F[i3 + 2] /= l; }
       let ph = this.PH[i] + TAU * (0.4 + hv * 2 + JET[i] * 1.2) * dt; if (ph > PH_WRAP) ph -= PH_WRAP; this.PH[i] = ph;
@@ -713,6 +875,7 @@ export class Encounter {
       if (ed < hr + 2 && ed > 1e-4) { const pu = (hr + 2 - ed) * dt * 0.8; nx += ex / ed * pu; ny += ey / ed * pu * 0.5; nz += ez / ed * pu; }
       if (ed < hr && ed > 1e-4) { nx = cx + ex / ed * hr; ny = cy + ey / ed * hr; nz = cz + ez / ed * hr; }
       P[i3] = nx; P[i3 + 1] = ny; P[i3 + 2] = nz;
+      if (this.obs.length) this._pushOut(i, P, null);
       const m = this.sp.mot;
       let p2 = ph + TAU * m.idle * (0.8 + 0.4 * this.RP[i * 4 + 1]) * dt; if (p2 > PH_WRAP) p2 -= PH_WRAP; this.PH[i] = p2;
       this.AMP[i] = 1;

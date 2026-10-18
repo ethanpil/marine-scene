@@ -118,3 +118,42 @@ export async function diagnose(secs = 120, maxLogs = 6) {
   c.spawn = os;
   return { miss, tot, spawns: spawns.join(' '), logs };
 }
+
+// Obstacle test: optionally add synthetic pillars / boulders along the path, run `secs` with
+// __ocean.advance and report the worst body penetration over every creature instance.
+export async function obstacleTest(secs = 120, synthetic = true) {
+  await new Promise((r) => setTimeout(r, 1500));
+  const o = window.__ocean, c = o.creatures, reg = o.obstacles, sh = o.shape;
+  const { mulberry32 } = await import('../noise.js');
+  const rng = mulberry32(99), added = [];
+  let genS = c.ctx.s;
+  const gen = (toS) => {
+    for (; genS < toS; genS += 6) {
+      const x = sh.pathX(genS) + (rng() - 0.5) * 24, fl = sh.floorAt(x, genS);
+      if (Math.abs(x - sh.pathX(genS)) < 3.5) continue; // keep the camera tube clear
+      if (rng() < 0.5) { const h = 2 + rng() * 6, r = 0.5 + rng() * 1.2; added.push(reg.add({ ax: x, ay: fl - 1, as: genS, bx: x, by: fl + h, bs: genS, r })); }
+      else { const r = 0.8 + rng() * 2.2; added.push(reg.add({ ax: x, ay: fl + r * 0.3, as: genS, bx: x, by: fl + r * 0.3, bs: genS, r })); }
+    }
+  };
+  let worst = 0, worstKey = '', samples = 0, deep = 0;
+  const q = [];
+  for (let t = 0; t < secs; t += 0.5) {
+    if (synthetic) gen(c.ctx.s + 260);
+    o.advance(0.5);
+    for (const e of c.enc) {
+      if (e.kind === 'colony' || e.kind === 'peek') continue;
+      for (let i = 0; i < e.n; i++) {
+        const x = e.P[i * 3], s = -(e.anchorZ + e.P[i * 3 + 2]);
+        reg.query(x, s, 6 + e.SZ[i], q);
+        if (!q.length) continue;
+        samples++;
+        const d = e._clear(i, e.P[i * 3], e.P[i * 3 + 1], e.P[i * 3 + 2], 3, q) + 0.05 + 0.03 * e.SZ[i]; // vs body radius, without the margin
+        if (d < worst) { worst = d; worstKey = e.sp.key + '/' + e.kind; }
+        if (d < -0.05) deep++;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  if (synthetic) for (const a of added) reg.remove(a);
+  return { registered: reg.count, synthetic: added.length, samples, worstPenetration: +worst.toFixed(3), worstKey, over5cm: deep, avgMs: c.stats.ms.toFixed(2) };
+}

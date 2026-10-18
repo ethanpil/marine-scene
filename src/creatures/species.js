@@ -999,3 +999,58 @@ export function speciesOf(key) {
   return sp;
 }
 for (const k in SPECIES) if (SPECIES[k]) { SPECIES[k].key = k; SPECIES[k].name = k; }
+
+// ---------- common names (for the `i` label overlay) ----------
+export const NAMES = {
+  clownfish: 'Clown anemonefish', bluetang: 'Blue tang', yellowtang: 'Yellow tang', moorish: 'Moorish idol',
+  emperorAngel: 'Emperor angelfish', queenAngel: 'Queen angelfish', butterfly: 'Threadfin butterflyfish', copperband: 'Copperband butterflyfish',
+  parrotfish: 'Bumphead parrotfish', lionfish: 'Red lionfish', puffer: 'Guineafowl puffer', boxfish: 'Yellow boxfish',
+  coralGrouper: 'Coral hind', goliath: 'Atlantic goliath grouper', snapper: 'Bluestripe snapper', sweetlips: 'Oriental sweetlips',
+  picasso: 'Picasso triggerfish', anthias: 'Sea goldie', chromis: 'Blue-green chromis', sergeant: 'Sergeant major',
+  napoleon: 'Humphead wrasse', barracuda: 'Great barracuda', jack: 'Bigeye trevally', reefShark: 'Grey reef shark',
+  whitetip: 'Whitetip reef shark', blacktip: 'Blacktip reef shark', eagleRay: 'Spotted eagle ray', bluespotRay: 'Bluespotted ribbontail ray',
+  southernRay: 'Southern stingray', manta: 'Reef manta ray', moray: 'Green moray', spotMoray: 'Spotted moray',
+  gardenEel: 'Spotted garden eel', splendidEel: 'Splendid garden eel', greenTurtle: 'Green sea turtle', octopus: 'Common octopus',
+  cuttlefish: 'Broadclub cuttlefish', reefSquid: 'Bigfin reef squid', whaleShark: 'Whale shark', sardine: 'Pacific sardine',
+  anchovy: 'Northern anchovy', yellowfin: 'Yellowfin tuna', bluefin: 'Atlantic bluefin tuna', mahi: 'Mahi-mahi',
+  sailfish: 'Indo-Pacific sailfish', oceanicWhitetip: 'Oceanic whitetip shark', blueShark: 'Blue shark', greatWhite: 'Great white shark',
+  hammerhead: 'Scalloped hammerhead', sandTiger: 'Sand tiger shark', greenlandShark: 'Greenland shark', mola: 'Ocean sunfish',
+  humpback: 'Humpback whale', blueWhale: 'Blue whale', spermWhale: 'Sperm whale', orca: 'Orca', bottlenose: 'Bottlenose dolphin',
+  commonDolphin: 'Short-beaked common dolphin', pilotWhale: 'Long-finned pilot whale', beluga: 'Beluga whale', narwhal: 'Narwhal',
+  garibaldi: 'Garibaldi', sheephead: 'California sheephead', kelpBass: 'Kelp bass', blacksmith: 'Blacksmith', senorita: 'Señorita',
+  opaleye: 'Opaleye', giantSeaBass: 'Giant sea bass', leopardShark: 'Leopard shark', batRay: 'Bat ray', harbourSeal: 'Harbour seal',
+  seaLion: 'California sea lion', leopardSeal: 'Leopard seal', weddellSeal: 'Weddell seal', seaNettle: 'Pacific sea nettle',
+  moonJelly: 'Moon jellyfish', seahorse: 'Thorny seahorse', manatee: 'West Indian manatee', dugong: 'Dugong', silverside: 'Atlantic silverside',
+  filefish: 'Scrawled filefish', pipefish: 'Banded pipefish', sculpin: 'Tidepool sculpin', blenny: 'Rockpool blenny', tarpon: 'Atlantic tarpon',
+  sweeper: 'Glassy sweeper', batfish: 'Longfin batfish', anglerfish: 'Humpback anglerfish', lanternfish: 'Lanternfish',
+  hatchetfish: 'Silver hatchetfish', viperfish: "Sloane's viperfish", dragonfish: 'Black dragonfish', rattail: 'Grenadier',
+  eelpout: 'Vent eelpout', chimaera: 'Spotted ratfish', atolla: 'Atolla jellyfish', combJelly: 'Comb jelly', pelagia: 'Mauve stinger',
+  helmetJelly: 'Helmet jellyfish', siphonophore: 'Siphonophore', vampireSquid: 'Vampire squid', giantSquid: 'Giant squid',
+  emperorPenguin: 'Emperor penguin', adeliePenguin: 'Adélie penguin', krill: 'Antarctic krill', icefish: 'Blackfin icefish',
+  toothfish: 'Antarctic toothfish', arcticCod: 'Arctic cod', lionsMane: "Lion's mane jellyfish", flounder: 'Peacock flounder',
+  guitarfish: 'Shovelnose guitarfish', lizardfish: 'Variegated lizardfish', goatfish: 'Yellowfin goatfish', nurseShark: 'Nurse shark',
+  oceanicSquid: 'Humboldt squid', glowSquid: 'Bioluminescent squid',
+};
+const FAMILIES = {
+  reef: ['Wrasse', 'Damselfish', 'Butterflyfish', 'Snapper', 'Cardinalfish', 'Surgeonfish', 'Hawkfish', 'Grunt', 'Rabbitfish', 'Fusilier'],
+  ruins: ['Wrasse', 'Damselfish', 'Snapper', 'Cardinalfish', 'Grunt', 'Fusilier', 'Hogfish'],
+  kelp: ['Rockfish', 'Surfperch', 'Greenling', 'Halfmoon', 'Wrasse'],
+  seagrass: ['Wrasse', 'Pinfish', 'Grunt', 'Parrotfish', 'Pipefish'],
+  sandflat: ['Sand perch', 'Wrasse', 'Goby', 'Jawfish', 'Mojarra'],
+  wreck: ['Grunt', 'Snapper', 'Cardinalfish', 'Soldierfish', 'Bigeye'],
+  cave: ['Cardinalfish', 'Silverside', 'Bigeye'],
+  tidepool: ['Goby', 'Blenny', 'Sculpin', 'Clingfish'],
+  vents: ['Eelpout', 'Cusk-eel', 'Snailfish'],
+  abyss: ['Bristlemouth', 'Hatchetfish', 'Lanternfish', 'Dragonfish'],
+  polar: ['Notothen', 'Sculpin', 'Snailfish'],
+  pelagic: ['Scad', 'Jack', 'Driftfish'],
+};
+export function commonName(sp) {
+  const k = sp.key || '';
+  if (k.startsWith('proc:')) {
+    const [, kind, seed] = k.split(':');
+    const list = FAMILIES[kind] || FAMILIES.reef;
+    return list[(parseInt(seed, 10) >>> 0) % list.length];
+  }
+  return NAMES[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (m) => m.toUpperCase());
+}

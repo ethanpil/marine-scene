@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { makeMaterials } from './shader.js';
 import { GeoCache, Encounter } from './encounter.js';
 import { Director } from './director.js';
+import { commonName } from './species.js';
 
 const _v = new THREE.Vector3();
 const qs = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
@@ -36,6 +37,30 @@ export class Creatures {
         this.cache.prebuild(sp);
       }
     };
+  }
+
+  // Label overlay (`i` key): one entry per visible group, anchored on a visible instance near its centre
+  // (two for large schools). GLOBAL coordinates (z = -s).
+  labels(out) {
+    const camera = this.env.camera, cp = camera.position, maxD = this.fogD * 0.7, v = _v, Oz = this.ctx.Oz;
+    for (const e of this.enc) {
+      if (!e.visible || e.dist > maxD || e.fade < 0.5) continue;
+      const name = e._label || (e._label = commonName(e.sp));
+      const b = e.bounds, step = Math.max(1, Math.floor(e.n / 40));
+      let best = -1, bd = 1e9, far = -1, fd = -1;
+      for (let i = 0; i < e.n; i += step) {
+        v.set(e.P[i * 3], e.P[i * 3 + 1], e.anchorZ + e.P[i * 3 + 2] - Oz);
+        if (!this.frustum.containsPoint(v) || v.distanceTo(cp) > maxD) continue;
+        const dc = Math.hypot(e.P[i * 3] - b.x, e.P[i * 3 + 1] - b.y, e.P[i * 3 + 2] - b.z);
+        if (dc < bd) { bd = dc; best = i; }
+        if (dc > fd) { fd = dc; far = i; }
+      }
+      if (best < 0) continue;
+      const lift = e.SZ[best] * (e.sp.plan === 'jelly' || e.sp.plan === 'octopus' ? 0.8 : 0.45);
+      out.push({ name, x: e.P[best * 3], y: e.P[best * 3 + 1] + lift, z: e.anchorZ + e.P[best * 3 + 2] });
+      if (e.n >= 40 && far >= 0 && fd > 6) out.push({ name, x: e.P[far * 3], y: e.P[far * 3 + 1] + lift, z: e.anchorZ + e.P[far * 3 + 2] });
+    }
+    return out;
   }
 
   spawn(sp, plan) {

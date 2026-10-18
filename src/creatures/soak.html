@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Creature Soak</title>
+  <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js" } }</script>
+</head>
+<body>
+<script type="module">
+// Dev-only: run the creatures system headless against the real world shape with a dense synthetic
+// obstacle field (reef-like coral heads + pillars). Reports CPU, budgets and worst penetration.
+// ?biome=reef&seed=7&secs=300&density=1
+import * as THREE from 'three';
+import { U } from '../water.js';
+import { BIOMES, BiomeSequence, WorldShape } from '../biomes.js';
+import { Obstacles } from '../obstacles.js';
+import { Creatures } from './index.js';
+import { mulberry32 } from '../noise.js';
+const qs = new URLSearchParams(location.search);
+const seed = +(qs.get('seed') || 7), secs = +(qs.get('secs') || 300), density = +(qs.get('density') || 1);
+const seq = new BiomeSequence(seed, qs.get('biome') || 'reef'), shape = new WorldShape(seq);
+const obstacles = new Obstacles();
+const world = new THREE.Group(), scene = new THREE.Scene(); scene.add(world);
+const camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.1, 1400);
+const cr = new Creatures(world, { shape, seq, world, scene, camera, renderer: null, U, BIOMES, seed, shadows: false, obstacles });
+const rng = mulberry32(5);
+let genS = -20;
+function gen(toS) { // coral heads / boulders and some pillars; keep the camera tube clear
+  for (; genS < toS; genS += 1.2 / density) {
+    const x = shape.pathX(genS) + (rng() - 0.5) * 60;
+    if (Math.abs(x - shape.pathX(genS)) < 4) continue;
+    const fl = shape.floorAt(x, genS);
+    if (rng() < 0.15) { const h = 2 + rng() * 7, r = 0.4 + rng() * 1.2; obstacles.add({ ax: x, ay: fl - 1, as: genS, bx: x, by: fl + h, bs: genS, r }); }
+    else { const r = 0.4 + rng() * 1.8; obstacles.add({ ax: x, ay: fl + r * 0.2, as: genS, bx: x + (rng() - 0.5) * r, by: fl + r * 0.2, bs: genS + (rng() - 0.5) * r, r }); }
+  }
+}
+window.run = async () => {
+  const cam = { s: 0, x: 0, y: 0, z: 0, forward: new THREE.Vector3(0, 0, -1), camera, Oz: 0 };
+  let s = 0, n = 0, sum = 0, worst = 0, slow = 0, maxEnc = 0, maxInst = 0, worstPen = 0, worstKey = '', samples = 0;
+  const q = [], dt = 1 / 30;
+  for (let f = 0; f < secs * 30; f++) {
+    s += 3.2 * dt; gen(s + 260);
+    cam.s = s; cam.x = shape.pathX(s); cam.y = shape.pathY(s); cam.z = -s; cam.Oz = Math.ceil(-s / 1024) * 1024;
+    camera.position.set(cam.x, cam.y, cam.z - cam.Oz); camera.lookAt(shape.pathX(s + 16), shape.pathY(s + 16), -(s + 16) - cam.Oz);
+    const a = performance.now(); cr.update(dt, (f * dt) % 4096, cam); const b = performance.now() - a;
+    if (f > 30) { n++; sum += b; if (b > worst) worst = b; if (b > 4) slow++; }
+    maxEnc = Math.max(maxEnc, cr.enc.length); maxInst = Math.max(maxInst, cr.instances);
+    if (f % 5 === 0) for (const e of cr.enc) {
+      if (e.kind === 'colony' || e.kind === 'peek') continue;
+      for (let i = 0; i < e.n; i++) {
+        obstacles.query(e.P[i * 3], -(e.anchorZ + e.P[i * 3 + 2]), 6 + e.SZ[i], q);
+        if (!q.length) continue;
+        samples++;
+        const d = e._clear(i, e.P[i * 3], e.P[i * 3 + 1], e.P[i * 3 + 2], 3, q) + 0.05 + 0.03 * e.SZ[i];
+        if (d < worstPen) { worstPen = d; worstKey = e.sp.key + '/' + e.kind; }
+      }
+    }
+    if (f % 600 === 0) await new Promise((r) => setTimeout(r, 0));
+    while (obstacles.count > 6000) break;
+  }
+  return { km: (s / 1000).toFixed(2), obstacles: obstacles.count, avgMs: (sum / n).toFixed(3), worstMs: worst.toFixed(1), slowPct: (100 * slow / n).toFixed(2), maxEnc, maxInst, samples, worstPenetration: +worstPen.toFixed(3), worstKey, meshes: world.children.length, refs: [...cr.cache.map.values()].reduce((a, e) => a + e.refs, 0) };
+};
+window.ready = true; window.cr = cr;
+</script>
+</body>
+</html>

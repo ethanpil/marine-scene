@@ -2,6 +2,7 @@
 // Spawns ahead of the camera at the fog edge (or behind it, out of view, for overtakers).
 import { mulberry32, hash2i } from '../noise.js';
 import { speciesOf } from './species.js';
+import { Obstacles } from '../obstacles.js';
 
 // [species key | 'proc:<kind>', weight, cooldown (s)]
 // target = desired simultaneous encounters, lat = max lateral offset from the camera path.
@@ -341,10 +342,18 @@ export class Director {
       plan.l0 = latLim(l);
     }
     // validate water column at the spawn point; shrink lateral offset if needed
-    for (let k = 0; k < 4; k++) {
+    const reg = sys.env && sys.env.obstacles;
+    for (let k = 0; k < 6; k++) {
       const x = sh.pathX(plan.s0) + plan.l0;
       const fl = sh.floorAt(x, plan.s0), ce = Math.min(sh.ceilingAt(x, plan.s0), -0.4);
-      if (ce - fl > 1.2 + sp.size[1] * (sp.plan === 'jelly' ? 1 : 0.4)) return plan;
+      let ok = ce - fl > 1.2 + sp.size[1] * (sp.plan === 'jelly' ? 1 : 0.4);
+      if (ok && reg && reg.count) { // never spawn inside a rock / pillar / hull
+        const y = beh.zone === 'floor' || ['shoal', 'hover', 'rest', 'octo', 'colony', 'peek'].includes(beh.kind) ? fl + 0.5 : sh.pathY(plan.s0) + (plan.h0 || 0);
+        const need = 0.6 + sp.size[1] * 0.4;
+        for (const o of reg.query(x, plan.s0, need + 3, this._q || (this._q = []))) if (Obstacles.dist(o, x, y, plan.s0, null) < need) { ok = false; break; }
+        if (!ok) { plan.l0 += (plan.l0 >= 0 ? 1 : -1) * (2 + k * 1.5); plan.s0 += 3; continue; }
+      }
+      if (ok) return plan;
       plan.l0 *= 0.45;
     }
     return null;
