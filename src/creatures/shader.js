@@ -108,6 +108,7 @@ void crDeform(inout vec3 p, inout vec3 n) {
     // jellyfish: bell pulse + lagging tentacles (local +y is the bell apex)
     float pc = 0.5 + 0.5 * sin(ph);
     float P = A * pc * pc;
+    if (isPaired) { float sd = sign(p.x); crRotZ(p, n, sd * 0.1, sd * (0.55 * sin(ph) - 0.1)); } // dumbo ear fins
     if (isArm) {
       float d = aG.w;
       float pl = 0.5 + 0.5 * sin(ph - d * 2.2);
@@ -161,11 +162,26 @@ void crDeform(inout vec3 p, inout vec3 n) {
     env *= env;
     p.x += A * env * sin(ph - K * tt);
     p.y += A * 0.6 * env * cos(ph * 0.71 - K * tt);
-  } else {
+  } else if (mode < 9.5) {
     // seahorse: vertical body, gentle rock + fast dorsal flutter
     p.x += 0.02 * sin(ph * 0.4) * (p.y + 0.4);
     if (isMedian) p.x += aG.w * 0.035 * sin(ph * 14.0 - aG.z * 10.0);
     if (isPaired) p.y += aG.w * 0.02 * sin(ph * 12.0);
+  } else {
+    // walkers (crabs, lobsters, isopods, sea pigs; local +y up): legs step in a metachronal wave
+    // (left / right in antiphase), the body bobs with the stride, antennae and papillae sway
+    p.y += A * 0.004 * sin(ph * 2.0);
+    if (isArm) {
+      float idx = aG.z, d = aG.w;
+      if (abs(idx) < 9.5) {
+        float lp = ph + abs(idx) * 1.9 + (idx < 0.0 ? 3.14159 : 0.0);
+        p.z += A * 0.07 * d * sin(lp);
+        p.y += A * 0.045 * d * max(0.0, cos(lp)) * (1.0 - 0.3 * d);
+      } else {
+        p.x += d * d * 0.05 * sin(ph * 0.21 + idx);
+        p.y += d * d * 0.04 * cos(ph * 0.17 + idx * 1.3);
+      }
+    }
   }
 }
 `;
@@ -359,6 +375,7 @@ vec2 q = vec2(-vLoc.z, vLoc.y);
 if (crMode == 2.0 || crMode == 4.0 || crMode == 6.0) q = vec2(vLoc.x, -vLoc.z);
 if (crMode == 9.0) q = vec2(vLoc.y, vLoc.z);
 if (crMode == 1.0 || crMode == 3.0) q = vec2(-vLoc.z, vLoc.y + abs(vLoc.x)); // wrap over the back (no lateral streaking from above)
+if (crMode == 10.0) q = vec2(-vLoc.z + vLoc.y * 0.5, vLoc.x + vLoc.y * 0.5);   // walkers: mostly seen from above
 vec2 qw = vec2(-vLoc.z, vLoc.y + abs(vLoc.x));                                 // wrapped coords for marks on top surfaces
 float sd = fract(vPat.y * 7.31 + vPat2.x * 3.17) * 50.0 + vVar.x * 97.0;  // per-individual pattern seed / phase
 q.x += (vVar.x - 0.5) * 0.06;  // pattern offset along the body
@@ -428,7 +445,10 @@ if (crMode == 0.0 && crPart == 0.0 && vPat2.z > 0.12) {
   float lline = (1.0 - smoothstep(0.0, 0.022, abs(vN - (0.32 - 0.16 * crT)))) * smoothstep(0.12, 0.2, crT) * smoothstep(0.86, 0.76, crT);
   crCol = mix(crCol, crCol * 1.3 + 0.015, lline * 0.35);
 }
-if (crMode == 6.0) crCol = mix(crCol, cB * 1.15, clamp(vExc - 1.0, 0.0, 1.0) * 0.55); // blanching when alarmed
+if (crMode == 6.0) { // blanching when alarmed; a dark flush of the chromatophores at the moment of the startle
+  crCol = mix(crCol, cB * 1.15, clamp(vExc - 1.0, 0.0, 1.0) * 0.55);
+  crCol = mix(crCol, cP * 0.45, clamp(vExc - 2.4, 0.0, 1.0) * 0.85);
+}
 if (vVar2.x > 0.01 && (crPart == 0.0 || crPart == 10.0)) { // healed scratches and scars
   // thin wiggly scratches along a noise contour, sparse and individual
   float cn = crNoise(qw * vec2(5.0, 9.0) + vVar.x * 40.0);

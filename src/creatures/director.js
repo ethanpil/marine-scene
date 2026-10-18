@@ -1,11 +1,20 @@
 // Encounter director: blended per-biome tables with rarity, cooldowns, novelty and budgets.
 // Spawns ahead of the camera at the fog edge (or behind it, out of view, for overtakers).
 import { mulberry32, hash2i } from '../noise.js';
-import { speciesOf } from './species.js';
+import { speciesOf, DIEL } from './species.js';
 import { Obstacles } from '../obstacles.js';
 
 // [species key | 'proc:<kind>', weight, cooldown (s)]
 // target = desired simultaneous encounters, lat = max lateral offset from the camera path.
+// night / dusk lists are blended in by U.uNight (diel vertical migration, nocturnal hunters, dusk feeding).
+const NIGHT_REEF = [['whitetipNight', 2.5, 60], ['morayNight', 2.5, 60], ['spinyLobster', 3, 40], ['reefCrab', 3, 40], ['soldierfish', 3, 40],
+  ['octopus', 3, 60], ['cuttlefish', 2, 70], ['reefSquid', 2.5, 60], ['combJelly', 2, 80], ['lanternfish', 1.5, 90], ['glowSquid', 1.2, 110], ['sweeper', 2, 60]];
+const NIGHT_SAND = [['spinyLobster', 2, 50], ['reefCrab', 2.5, 40], ['octopus', 2.5, 60], ['cuttlefish', 2, 70], ['reefSquid', 2.5, 60],
+  ['combJelly', 1.5, 90], ['morayNight', 1, 90], ['flounder', 1.5, 60], ['lanternfish', 1, 100]];
+const NIGHT_KELP = [['octopus', 3, 60], ['reefSquid', 2.5, 60], ['combJelly', 2, 80], ['lanternfish', 1.5, 90], ['harbourSeal', 1, 140], ['spinyLobster', 2.5, 50]];
+const NIGHT_OPEN = [['lanternfish', 4, 50], ['hatchetfish', 2, 70], ['glowSquid', 2.5, 70], ['combJelly', 2.5, 70], ['pelagia', 2, 80], ['oceanicSquid', 2, 90], ['siphonophore', 0.8, 200]];
+const NIGHT_MANGROVE = [['reefCrab', 3, 40], ['spinyLobster', 1, 80], ['lemonShark', 1.5, 90], ['combJelly', 1.5, 80], ['octopus', 1.5, 80], ['tarpon', 1.5, 90]];
+const DUSK = [['jack', 3, 60], ['barracuda', 3, 60], ['sardine', 2, 80]];
 export const TABLES = {
   reef: { cover: 3, target: 17, lat: 45, list: [
     ['chromis', 6, 25], ['anthias', 6, 25], ['bluetang', 4, 45], ['yellowtang', 4, 45], ['clownfish', 3, 60], ['butterfly', 4, 45],
@@ -16,31 +25,31 @@ export const TABLES = {
     ['splendidEel', 1, 120], ['greenTurtle', 1.8, 120], ['octopus', 2.5, 80], ['cuttlefish', 2, 80], ['reefSquid', 2, 80],
     ['manta', 0.7, 360], ['whaleShark', 0.45, 600], ['bottlenose', 0.4, 500], ['proc:reef', 8, 10], ['rainbowRunner', 0.8, 120],
     ['southernRay', 1.2, 120], ['flounder', 1.5, 90], ['lizardfish', 1.5, 80], ['goatfish', 2, 60], ['nurseShark', 0.8, 160],
-  ] },
+  ], night: NIGHT_REEF, dusk: DUSK },
   sandflat: { cover: 3, target: 12, lat: 50, list: [
     ['southernRay', 4, 50], ['bluespotRay', 3, 50], ['eagleRay', 2.5, 90], ['manta', 0.8, 300], ['gardenEel', 3, 60], ['splendidEel', 1.5, 90],
     ['flounder', 3, 45], ['guitarfish', 2, 70], ['lizardfish', 2.5, 50], ['goatfish', 3, 40], ['nurseShark', 1.5, 100], ['greenTurtle', 2, 90],
     ['reefSquid', 1.5, 80], ['cuttlefish', 1.5, 80], ['octopus', 1.5, 90], ['blacktip', 0.8, 150], ['silverside', 2, 60], ['jack', 0.6, 160],
     ['barracuda', 0.6, 150], ['proc:sandflat', 2, 30],
-  ] },
+  ], night: NIGHT_SAND, dusk: DUSK },
   kelp: { cover: 3, target: 12, lat: 40, list: [
     ['garibaldi', 5, 40], ['sheephead', 3, 60], ['kelpBass', 4, 45], ['blacksmith', 5, 40], ['senorita', 4, 45], ['opaleye', 3, 60],
     ['giantSeaBass', 1, 220], ['leopardShark', 1.5, 120], ['batRay', 1.5, 120], ['harbourSeal', 1.5, 150], ['seaLion', 1.8, 120],
     ['seaNettle', 2, 90], ['moonJelly', 1.5, 100], ['sardine', 1.2, 150], ['octopus', 2, 90], ['reefSquid', 1.5, 90], ['blueWhale', 0.25, 900], ['proc:kelp', 5, 15],
-  ] },
+  ], night: NIGHT_KELP },
   seagrass: { cover: 3, target: 10, lat: 45, list: [
     ['seahorse', 4, 45], ['pipefish', 3, 60], ['silverside', 5, 40], ['filefish', 3, 60], ['greenTurtle', 3, 80], ['cuttlefish', 2.5, 80],
     ['southernRay', 2.5, 80], ['bluespotRay', 1.5, 100], ['puffer', 2, 90], ['manatee', 0.8, 300], ['dugong', 0.6, 360],
     ['moonJelly', 1.5, 100], ['parrotfish', 1.5, 90], ['proc:seagrass', 5, 15], ['flounder', 2, 70], ['goatfish', 1.5, 70], ['reefSquid', 1.5, 90],
     ['eagleRay', 1, 150], ['blacktip', 1, 140], ['snapper', 2, 80],
-  ] },
+  ], night: NIGHT_SAND },
   pelagic: { cover: 3, target: 11, lat: 90, list: [
     ['sardine', 4, 70], ['anchovy', 3, 70], ['yellowfin', 3, 80], ['bluefin', 1.5, 140], ['mahi', 2, 100], ['sailfish', 0.8, 240],
     ['oceanicWhitetip', 1.2, 160], ['blueShark', 2, 120], ['greatWhite', 0.5, 420], ['hammerhead', 0.8, 300], ['mola', 1.2, 220],
     ['manta', 0.8, 300], ['whaleShark', 0.7, 420], ['humpback', 0.9, 360], ['blueWhale', 0.5, 600], ['spermWhale', 0.5, 600],
     ['orca', 0.6, 500], ['commonDolphin', 1.6, 200], ['bottlenose', 1, 240], ['pilotWhale', 0.6, 400], ['moonJelly', 2, 90],
     ['pelagia', 1.5, 120], ['seaNettle', 1, 140], ['siphonophore', 0.6, 300], ['greenTurtle', 1, 160], ['oceanicSquid', 2, 120], ['proc:pelagic', 1.5, 40], ['rainbowRunner', 1.5, 90],
-  ] },
+  ], night: NIGHT_OPEN, dusk: DUSK },
   cave: { cover: 2.5, target: 7, lat: 4, list: [
     ['tarpon', 4, 50], ['sweeper', 5, 40], ['silverside', 4, 45], ['jack', 1, 150], ['moray', 1.5, 90], ['proc:cave', 3, 25],
     ['blenny', 1.5, 60], ['eelpout', 0.5, 120],
@@ -49,13 +58,13 @@ export const TABLES = {
     ['barracuda', 3, 80], ['goliath', 2, 120], ['sweeper', 4, 50], ['batfish', 3, 70], ['sandTiger', 2, 120], ['moray', 2, 60],
     ['jack', 2, 100], ['snapper', 3, 60], ['eagleRay', 1.2, 150], ['greenTurtle', 1.2, 150], ['lionfish', 2, 90], ['reefShark', 1.5, 120],
     ['proc:wreck', 4, 15], ['manta', 0.4, 400], ['octopus', 2, 80], ['southernRay', 1.5, 90], ['flounder', 1, 100], ['nurseShark', 1, 130],
-  ] },
+  ], night: NIGHT_REEF, dusk: DUSK },
   ruins: { cover: 3, target: 13, lat: 40, list: [
     ['snapper', 3, 60], ['parrotfish', 3, 60], ['napoleon', 1.2, 200], ['coralGrouper', 2, 90], ['goliath', 1, 150], ['jack', 2, 100],
     ['barracuda', 2, 100], ['eagleRay', 1.5, 120], ['southernRay', 1.5, 100], ['octopus', 2.5, 80], ['greenTurtle', 1.5, 120],
     ['moray', 1.5, 80], ['bluetang', 2, 60], ['butterfly', 2, 60], ['moorish', 2, 70], ['chromis', 3, 40], ['anthias', 3, 40],
     ['proc:ruins', 6, 12], ['bottlenose', 0.4, 400], ['manta', 0.4, 400],
-  ] },
+  ], night: NIGHT_REEF, dusk: DUSK },
   vents: { cover: 3, target: 9, lat: 30, list: [
     ['eelpout', 4, 40], ['rattail', 3, 60], ['anglerfish', 2.5, 90], ['chimaera', 2, 100], ['helmetJelly', 2, 90], ['atolla', 2, 90],
     ['viperfish', 1.5, 110], ['lanternfish', 2, 90], ['siphonophore', 0.8, 240], ['octopus', 1.5, 120], ['glowSquid', 1, 120], ['proc:vents', 2, 30],
@@ -69,6 +78,28 @@ export const TABLES = {
     ['atolla', 3, 70], ['combJelly', 3, 70], ['helmetJelly', 2.5, 80], ['pelagia', 2, 80], ['siphonophore', 1.5, 160],
     ['vampireSquid', 1.5, 140], ['giantSquid', 0.35, 700], ['glowSquid', 2.5, 80], ['spermWhale', 0.3, 700], ['proc:abyss', 2, 40],
   ] },
+  softcoral: { cover: 3, target: 16, lat: 40, night: NIGHT_REEF, dusk: DUSK, list: [
+    ['anthias', 7, 20], ['purpleAnthias', 6, 20], ['glassfish', 4, 40], ['lionfish', 2.5, 70], ['napoleon', 1.2, 160], ['bannerfish', 3, 50],
+    ['cleanerWrasse', 1.5, 60], ['butterfly', 3, 50], ['emperorAngel', 1.5, 90], ['bluetang', 2, 60], ['picasso', 1.5, 80], ['coralGrouper', 2, 70],
+    ['moray', 1.5, 70], ['octopus', 1.5, 90], ['greenTurtle', 1.2, 140], ['hawksbill', 1, 160], ['manta', 0.5, 360], ['reefShark', 1, 140],
+    ['jack', 1, 160], ['barracuda', 1, 150], ['proc:softcoral', 5, 12], ['bottlenose', 0.3, 500], ['sweetlips', 1.5, 80], ['eagleRay', 0.8, 160],
+  ] },
+  wall: { cover: 3, target: 14, lat: 45, night: NIGHT_REEF, dusk: DUSK, list: [
+    ['hammerheadSchool', 1.2, 240], ['eagleRay', 2, 120], ['potatoGrouper', 1.5, 120], ['goliath', 0.8, 180], ['anthias', 6, 20], ['purpleAnthias', 4, 25],
+    ['turtleRest', 1, 120], ['hawksbill', 1.2, 120], ['greenTurtle', 1, 140], ['sweetlips', 2, 70], ['reefShark', 2, 100], ['whitetip', 1.2, 120],
+    ['napoleon', 1, 180], ['barracuda', 1.5, 120], ['jack', 1.5, 120], ['manta', 0.6, 300], ['bannerfish', 2, 60], ['moray', 1.5, 70],
+    ['butterfly', 2, 60], ['proc:wall', 4, 15], ['whaleShark', 0.25, 700], ['oceanicWhitetip', 0.4, 400], ['bottlenose', 0.4, 400],
+  ] },
+  mangrove: { cover: 3.5, target: 13, lat: 22, night: NIGHT_MANGROVE, list: [
+    ['juvSnapper', 5, 30], ['grunt', 5, 30], ['juvBarracuda', 3, 50], ['cassiopea', 3.5, 50], ['lemonShark', 2.5, 90], ['needlefish', 3, 50],
+    ['archerfish', 2.5, 60], ['saltwaterCroc', 0.35, 500], ['silverside', 3, 40], ['seahorse', 1, 120], ['southernRay', 1.2, 110], ['moonJelly', 1, 120],
+    ['proc:mangrove', 3, 20], ['goatfish', 1, 90], ['reefCrab', 1, 80], ['tarpon', 2.5, 90],
+  ] },
+  deepplain: { cover: 2.5, target: 9, lat: 40, list: [
+    ['tripodFish', 4, 40], ['seaPig', 4, 40], ['dumbo', 1.5, 120], ['rattail', 3, 50], ['giantIsopod', 2, 80], ['chimaera', 2, 90],
+    ['glassSquid', 1.5, 100], ['hagfish', 1, 120], ['deepCrab', 2, 70], ['eelpout', 1.5, 80], ['anglerfish', 0.8, 160], ['sleeperShark', 0.3, 500],
+    ['atolla', 1, 120], ['helmetJelly', 1, 120], ['proc:deepplain', 1, 40],
+  ] },
   polar: { cover: 3, target: 11, lat: 50, ensure: { S: ['adeliePenguin', 'emperorPenguin'], N: ['beluga', 'narwhal', 'harbourSeal'] }, list: [
     ['emperorPenguin', 5, 35], ['adeliePenguin', 6, 25], ['leopardSeal', 1.5, 150], ['weddellSeal', 1.5, 150], ['krill', 3, 60],
     ['icefish', 3, 60], ['toothfish', 1.5, 120], ['orca', 0.6, 400], ['humpback', 0.5, 450],
@@ -77,6 +108,23 @@ export const TABLES = {
   ] },
 };
 
+const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+const TAU = Math.PI * 2;
+// activity by time of day: diurnal fish thin out after dark, nocturnal ones only come out at night
+const dielW = (k, night) => { const d = DIEL[k] ?? (k.startsWith('proc:') ? 'day' : null); return d === 'day' ? 1 - 0.75 * night : d === 'night' ? night : 1; };
+const REMORA_HOSTS = { whaleShark: 0.85, manta: 0.6, oceanicWhitetip: 0.6, reefShark: 0.3, blacktip: 0.25, whitetip: 0.2, greatWhite: 0.3,
+  hammerhead: 0.25, hammerheadSchool: 0.2, sandTiger: 0.3, lemonShark: 0.25, greenTurtle: 0.2, hawksbill: 0.15, blueShark: 0.2 };
+const CURIOUS = new Set(['greenTurtle', 'hawksbill', 'manatee', 'dugong', 'potatoGrouper', 'napoleon', 'goliath', 'giantSeaBass']);
+const PLAY = new Set(['bottlenose', 'commonDolphin', 'seaLion', 'harbourSeal', 'leopardSeal']);
+const HUNTERS = { pelagic: ['yellowfin', 'sailfish', 'commonDolphin'], kelp: ['seaLion', 'kelpBass'], polar: ['adeliePenguin'],
+  reef: ['jack', 'barracuda', 'blacktip'], wall: ['jack', 'barracuda'], softcoral: ['jack', 'barracuda'], sandflat: ['jack', 'barracuda'],
+  wreck: ['jack', 'barracuda'], ruins: ['jack', 'barracuda'], seagrass: ['barracuda'], mangrove: ['juvBarracuda', 'tarpon'] };
+// species a set piece will need (prebuilt in idle time when such a POI is coming up)
+const POI_SPECIES = { 'cleaning-station': ['manta', 'cleanerWrasse'], 'whale-fall': ['hagfish', 'rattail', 'deepCrab', 'sleeperShark'],
+  'brine-pool': ['eelpout', 'deepCrab'], ledge: ['turtleRest', 'hawksbill', 'nurseShark'], 'wall-overhang': ['sweetlips'], 'amphora-den': ['octopus'],
+  wreck: ['glassfish', 'goliath', 'potatoGrouper', 'batfish'], 'kelp-clearing': ['seaLion'], iceberg: ['adeliePenguin', 'emperorPenguin', 'beluga'],
+  'garden-eel-field': ['gardenEel', 'splendidEel'], 'cave-opening': ['glassfish', 'sweeper'], 'vent-field': ['eelpout', 'deepCrab'],
+  'mangrove-roots': ['juvSnapper', 'grunt', 'juvBarracuda'], statue: ['jack', 'snapper'], giant: ['jack', 'snapper'], arch: ['jack', 'snapper'], treasure: ['moray', 'spotMoray'] };
 const pickW = (rng, obj) => { let t = 0; for (const k in obj) t += obj[k]; let r = rng() * t; for (const k in obj) { r -= obj[k]; if (r <= 0) return k; } return Object.keys(obj)[0]; };
 
 export class Director {
@@ -104,6 +152,9 @@ export class Director {
     this.clock += dt; this.hlTimer -= dt; this.timer -= dt;
     const sys = this.sys;
     if (!this.primed || c.jumped) { this.prime(c, !this.primed); this.primed = true; return; }
+    this._c = c;
+    this.delightTick(c);
+    if (this.poiTick(c)) return;
     // Coverage control: keep enough groups that are (or will soon be) readable inside the forward view.
     if (this.ensureTick(c)) return;
     const cov = this.coverage(c), want = this.coverWant(c);
@@ -133,6 +184,173 @@ export class Director {
     else if (lead) this.leadFail = this.clock; // no lead-capable species here right now
   }
 
+  // ---------- set pieces at points of interest registered by props ----------
+  poiTick(c) {
+    const sys = this.sys, env = sys.env;
+    if (!env || !env.pois) return false;
+    this.poiT = (this.poiT || 0) - 1;
+    if (this.poiT > 0) return false;
+    this.poiT = 20;
+    if (!this.poiDone) this.poiDone = new Map();
+    for (const [k, ps] of this.poiDone) if (ps < c.s - 80) this.poiDone.delete(k);
+    const list = env.pois.query(c.s + 20, c.s + Math.min(sys.fogD, 120) + 10, this._pois || (this._pois = []));
+    for (const p of list) {
+      const key = p.type + ':' + Math.round(p.x) + ':' + Math.round(p.s);
+      if (this.poiDone.has(key)) continue;
+      this.poiDone.set(key, p.s);
+      if (sys.enc.length > sys.maxEnc - 4) continue;
+      const cd = this.poiCool || (this.poiCool = {}); // the same kind of set piece at most every ~35 s
+      if ((cd[p.type] ?? -1e9) > this.clock - (p.type === 'brine-pool' || p.type === 'ledge' ? 45 : 25)) continue;
+      if (this.setPiece(p, c)) { cd[p.type] = this.clock; return true; } // at most one set piece per tick
+    }
+    return false;
+  }
+  spawnAt(key, p, over = {}) {
+    const sys = this.sys, sp = this.species(key);
+    if (!sp || sys.enc.length >= sys.maxEnc - 1) return null;
+    const plan = this.plan(sp, this._c, true, sys.seq.weights(p.s), sys.maxInstances - sys.instances, sys.maxTris - sys.trisTotal, false, false);
+    if (!plan) return null;
+    plan.s0 = p.s; plan.l0 = p.x - sys.shape.pathX(p.s); plan.noSeek = true; plan.fadeIn = true; plan.poi = p;
+    Object.assign(plan, over);
+    if (plan.n > sys.maxInstances - sys.instances) return null;
+    const e = sys.spawn(sp, plan);
+    if (e) { this.seen.set(sp.key, this.clock); this.hitchhikers(e); }
+    return e;
+  }
+  setPiece(p, c) {
+    const r = this.rng, sh = this.sys.shape, wb = this.sys.seq.weights(p.s)[0].key;
+    const rr = (a, b) => a + (b - a) * r();
+    switch (p.type) {
+      case 'cleaning-station': { // mantas circling slowly overhead while cleaner wrasse work the coral head
+        const nM = r() < 0.6 ? 1 : 2;
+        for (let k = 0; k < nM; k++) {
+          const rad = rr(5, 8), y = Math.max(p.y + 1.5 + k * 1.5, sh.pathY(p.s) + 2.2);
+          this.spawnAt('manta', p, { route: 'circle', kind: 'solo', zone: 'mid', n: 1, interest: 0.8,
+            orbit: { x: p.x, s: p.s, y, r: rad, w: rr(0.9, 1.2) / rad * (k ? -1 : 1), a0: r() * TAU, T: rr(60, 100) } });
+        }
+        this.spawnAt('cleanerWrasse', p, { kind: 'hover', homeY: p.y - 2.7, n: 3 + Math.floor(r() * 3) });
+        return true;
+      }
+      case 'whale-fall': // hagfish knotting over the carcass, grenadiers and crabs around it
+        this.spawnAt('hagfish', p, { kind: 'hover', homeY: p.y + 0.2, n: 14 + Math.floor(r() * 18), noSeek: true });
+        this.spawnAt('rattail', p, { kind: 'hover', n: 2 + Math.floor(r() * 3) });
+        this.spawnAt('deepCrab', p, { ring: Math.max(1.5, (p.r || 3) * 0.6), n: 3 + Math.floor(r() * 4) });
+        if (r() < 0.3) this.spawnAt('sleeperShark', p, { route: 'crossNear' });
+        return true;
+      case 'brine-pool': // eels and crabs around the shore of the brine lake
+        this.spawnAt('eelpout', p, { kind: 'hover', ring: (p.r || 6) * 0.95, n: 4 + Math.floor(r() * 5) });
+        this.spawnAt('deepCrab', p, { ring: (p.r || 6), n: 3 + Math.floor(r() * 4) });
+        return true;
+      case 'ledge': // a turtle (or a nurse shark) resting on the ledge
+        if (r() < 0.75) return !!this.spawnAt(wb === 'wall' || wb === 'softcoral' ? 'hawksbill' : 'turtleRest', p, { restY: p.y, n: 1 });
+        return !!this.spawnAt('nurseShark', p, { restY: p.y, n: 1 });
+      case 'wall-overhang':
+        this.spawnAt('sweetlips', p, { kind: 'shoal', homeY: p.y - 1.4, n: 5 + Math.floor(r() * 8) });
+        return true;
+      case 'amphora-den': // an octopus peeking out of an amphora
+        return !!this.spawnAt('octopus', p, { den: true, restY: p.y, n: 1 });
+      case 'wreck': { // a glassfish cloud inside, resident groupers, batfish hanging off the hull
+        this.spawnAt('glassfish', p, { kind: 'shoal', homeY: p.y, n: 120 + Math.floor(r() * 100) });
+        if (r() < 0.7) this.spawnAt(r() < 0.5 ? 'goliath' : 'potatoGrouper', p, { kind: 'hover', homeY: p.y - 1, n: 1 + Math.floor(r() * 2) });
+        if (r() < 0.6) this.spawnAt('batfish', p, { route: 'hold', vs: 0 });
+        return true;
+      }
+      case 'kelp-clearing': // sea lions playing: looping and corkscrewing around the clearing
+        return !!this.spawnAt('seaLion', p, { kind: 'pod', route: 'circle', zone: 'mid', n: 2 + Math.floor(r() * 3), spacing: 0.5,
+          orbit: { x: p.x, s: p.s, y: Math.min(p.y, -2), r: rr(4, 6), w: rr(0.35, 0.5), a0: r() * TAU, T: rr(40, 60) } });
+      case 'iceberg': { // penguins (south) or belugas (north) circling the berg
+        const south = this.hemi(this.region(p.s)) === 'S';
+        return !!this.spawnAt(south ? (r() < 0.6 ? 'adeliePenguin' : 'emperorPenguin') : 'beluga', p, { kind: 'pod', route: 'circle', zone: 'mid',
+          orbit: { x: p.x, s: p.s, y: -2.5, r: (p.r || 6) + rr(3, 6), w: rr(0.25, 0.4), a0: r() * TAU, T: rr(40, 70) } });
+      }
+      case 'garden-eel-field':
+        return !!this.spawnAt(r() < 0.7 ? 'gardenEel' : 'splendidEel', p, { kind: 'colony' });
+      case 'cave-opening':
+        return !!this.spawnAt(r() < 0.5 ? 'glassfish' : 'sweeper', p, { kind: 'shoal', homeY: p.y, n: 80 + Math.floor(r() * 120) });
+      case 'vent-field':
+        this.spawnAt('eelpout', p, { kind: 'hover', n: 4 + Math.floor(r() * 6) });
+        this.spawnAt('deepCrab', p, { n: 3 + Math.floor(r() * 5) });
+        return true;
+      case 'mangrove-roots':
+        this.spawnAt(r() < 0.5 ? 'juvSnapper' : 'grunt', p, { route: 'hold', vs: 0, zone: 'floor' });
+        if (r() < 0.4) this.spawnAt('juvBarracuda', p, { route: 'hold', vs: 0 });
+        return true;
+      case 'statue': case 'giant': case 'arch': // a school milling around the landmark
+        if (r() < 0.55) return !!this.spawnAt(r() < 0.6 ? 'jack' : 'snapper', p, { kind: 'mill', route: 'hold', vs: 0, zone: 'mid', h0: p.y - sh.pathY(p.s) });
+        return false;
+      case 'treasure':
+        return !!this.spawnAt(r() < 0.5 ? 'moray' : 'spotMoray', p, { kind: 'peek' });
+      default: return false;
+    }
+  }
+
+  // Remoras riding sharks, mantas, whale sharks and turtles.
+  hitchhikers(enc) {
+    const sys = this.sys, pr = REMORA_HOSTS[enc.sp.key];
+    if (!pr || enc.kind === 'rest' || enc.n > 6 || this.rng() > pr) return;
+    const sp = this.species('remora');
+    const n = Math.min(enc.n * 2, 1 + Math.floor(this.rng() * 3));
+    if (!sp || sys.instances + n > sys.maxInstances || sys.enc.length >= sys.maxEnc) return;
+    sys.spawn(sp, { n, kind: 'attach', host: enc, seed: (this.rng() * 4294967296) >>> 0, variant: (this.rng() * 4294967296) >>> 0,
+      s0: -(enc.anchorZ + enc.bounds.z), l0: 0, fadeIn: false });
+  }
+
+  // ---------- moments of delight ----------
+  delightTick(c) {
+    this.dlT = (this.dlT || 0) - 1;
+    if (this.dlT > 0) return;
+    this.dlT = 30;
+    const sys = this.sys, r = this.rng, now = this.clock, cool = this.dcool || (this.dcool = {});
+    const ready = (k, cd) => (cool[k] ?? -1e9) + cd < now;
+    const biome = sys.seq.weights(c.s + 40)[0].key;
+    for (const e of sys.enc) {
+      if (e.done || e.event || e.fade < 0.9) continue;
+      const key = e.sp.key, ahead = -(e.anchorZ + e.bounds.z) - c.s, flock = e.kind === 'solo' || e.kind === 'pod';
+      if (e.plan.calf && e.calfT === undefined && e.visible && e.dist < 50) e.calfT = 0; // the calf loops around its mother
+      if (!e.visible) continue;
+      if (CURIOUS.has(key) && flock && e.n <= 2 && ahead > 10 && ahead < 40 && ready('curious', 110) && r() < 0.4) { // a curious look
+        e.route = 'curious'; e.zone = 'mid'; e.event = { type: 'curious', t: 0, ph: 0, side: r() < 0.5 ? -1 : 1 };
+        cool.curious = now; continue;
+      }
+      if (PLAY.has(key) && e.kind === 'pod' && e.dist < 45 && ahead > -5 && ready('play', 140) && r() < 0.5) { // play around the camera
+        e.route = 'play'; e.zone = 'mid';
+        e.event = { type: 'play', t: 0, dur: 12 + r() * 6, w: 0.5 + r() * 0.15, ring: key === 'bottlenose' || key === 'commonDolphin' ? 1.5 : 1e9 };
+        cool.play = now; continue;
+      }
+      if (key === 'manta' && e.dist < 32 && ready('roll', 35) && r() < 0.35) { e.event = { type: 'roll', t: 0, dur: 3.2 }; cool.roll = now; continue; }
+      if (e.kind === 'bait' && !e.hunted && e.dist < 40 && ahead > -5 && ready('strike', 80)) { // hunters strike the bait ball
+        e.hunted = true; cool.strike = now;
+        const opts = HUNTERS[biome] || HUNTERS.reef;
+        const sp = this.species(opts[Math.floor(r() * opts.length)]);
+        const plan = sp && this.plan(sp, c, true, sys.seq.weights(c.s + 40), sys.maxInstances - sys.instances, sys.maxTris - sys.trisTotal, false, false);
+        if (!plan) continue;
+        const ps = -(e.anchorZ + e.Cz);
+        plan.s0 = ps + 8; plan.l0 = e.Cx - sys.shape.pathX(ps) + (r() < 0.5 ? -6 : 6); plan.route = 'strike'; plan.zone = 'mid';
+        plan.n = Math.max(1, Math.min(plan.n, sp.beh.n[1] > 20 ? 14 : 6)); plan.fadeIn = true;
+        const h = sys.spawn(sp, plan);
+        if (h) { h.event = { type: 'strike', prey: e, t: 0, dur: 22 + r() * 10, a: r() * TAU, w: 0.28 * (r() < 0.5 ? 1 : -1) }; h.route = 'strike'; }
+      }
+    }
+    // rare: humpbacks bubble-net feeding just ahead (rising ring of bubbles, whales lunging up through it)
+    if ((biome === 'pelagic' || biome === 'kelp' || (biome === 'polar' && this.hemi(this.region(c.s)) === 'S')) && ready('net', 360) && r() < 0.04 && sys.fx) {
+      const sp = this.species('humpback');
+      const plan = sp && this.plan(sp, c, true, sys.seq.weights(c.s + 60), sys.maxInstances - sys.instances, sys.maxTris - sys.trisTotal, false, false);
+      if (plan) {
+        const sh = sys.shape, s0 = c.s + 60, x0 = sh.pathX(s0) + (r() < 0.5 ? -1 : 1) * (4 + r() * 6);
+        const y0 = Math.max(sh.floorAt(x0, s0) + 9, sh.pathY(s0) - 16);
+        Object.assign(plan, { n: 2 + Math.floor(r() * 2), kind: 'pod', spacing: 0.35, route: 'lunge', zone: 'mid', s0, l0: x0 - sh.pathX(s0), h0: y0 - sh.pathY(s0), fadeIn: true, interest: 1 });
+        if (plan.n <= sys.maxInstances - sys.instances) {
+          const h = sys.spawn(sp, plan);
+          if (h) {
+            h.event = { type: 'lunge', t: 0, ph: 0, a: r() * TAU, wait: 7, o: { x: x0, s: s0, y0 } };
+            sys.fx.bubbleNet(x0, y0 + 3, -s0, 7, 6.5);
+            cool.net = now;
+          }
+        }
+      }
+    }
+  }
+
   // Next species likely to be spawned soon whose geometry is not cached yet (or null).
   nextPrewarm(c) {
     const sys = this.sys;
@@ -141,7 +359,8 @@ export class Director {
       const s = c.s + ds, region = this.region(s);
       for (const e of sys.seq.weights(s)) {
         const T = TABLES[e.key]; if (!T) continue;
-        for (const [key] of T.list) {
+        const L = T.night && sys.U && sys.U.uNight.value > 0.3 ? T.list.concat(T.night) : T.list;
+        for (const [key] of L) {
           const keys = key.startsWith('proc:') ? [0, 1, 2].map((k) => `${key}:${(region % 100000) * 16 + k}`) : [key];
           for (const k of keys) {
             if (this._pw.has(k)) continue;
@@ -151,6 +370,15 @@ export class Director {
           }
         }
       }
+    }
+    // hitchhikers, hunters for bait balls, and the cast of set pieces coming up
+    const extra = ['remora', ...(HUNTERS[sys.seq.weights(c.s + 60)[0].key] || [])];
+    if (sys.env && sys.env.pois) for (const p of sys.env.pois.query(c.s + 20, c.s + 220, this._ppw || (this._ppw = []))) extra.push(...(POI_SPECIES[p.type] || []));
+    for (const k of extra) {
+      if (this._pw.has(k)) continue;
+      this._pw.add(k);
+      const sp = this.species(k);
+      if (sp && !sys.cache.map.has(sp.key)) return sp;
     }
     return null;
   }
@@ -250,9 +478,12 @@ export class Director {
       const ww = w * bw * novelty * (near ? (rd >= 8 ? 3 : 0.4) : 1) * (cooling ? 0.3 : 1);
       cands.push({ sp, ck, ww, cd }); tot += ww;
     };
+    const night = sys.U ? sys.U.uNight.value : 0, dusk = clamp(1 - Math.abs(night * 2 - 1) * 1.4, 0, 1);
     for (const e of ws) {
       const T = TABLES[e.key]; if (!T) continue;
-      for (const [k, w, cd] of T.list) addCand(k, w, T.list.length < 10 ? cd * 0.5 : cd, e.w, T.list.length < 10);
+      for (const [k, w, cd] of T.list) { const wd = w * dielW(k, night); if (wd > 0.01) addCand(k, wd, T.list.length < 10 ? cd * 0.5 : cd, e.w, T.list.length < 10); }
+      if (night > 0.05 && T.night) for (const [k, w, cd] of T.night) addCand(k, w * night, cd, e.w, false);
+      if (dusk > 0.05 && T.dusk) for (const [k, w, cd] of T.dusk) addCand(k, w * dusk, cd, e.w, false);
     }
     if (!cands.length) return null;
     let r = rng() * tot, pick = cands[0];
@@ -262,6 +493,7 @@ export class Director {
     const enc = sys.spawn(pick.sp, plan);
     if (!enc) return null;
     this.mixWith(enc, pick.sp, plan, c, ws, region);
+    this.hitchhikers(enc);
     this.cool.set(pick.ck, this.clock + pick.cd * (0.7 + 0.6 * rng()));
     this.seen.set(pick.ck, this.clock);
     if (pick.sp.hl) this.hlTimer = 70 + rng() * 90;
@@ -315,6 +547,7 @@ export class Director {
       if (r < 0.1) n = Math.max(1, Math.round(n * (0.1 + rng() * 0.25)));
       else if (r > 0.93 && sp.size[1] < 2) n = Math.round(n * (1.5 + rng() * 0.7));
     }
+    if (sys.tierScale < 1 && n > 3) n = Math.round(n * sys.tierScale);
     n = Math.max(1, Math.min(n, instBudget, 400));
     const tris = sys.cache.map.get(sp.key)?.tris ?? 1500;
     while (n > 1 && n * tris > triBudget) n = Math.floor(n * 0.7);
@@ -330,10 +563,16 @@ export class Director {
     plan.readLat = readLat;
     const altUp = () => (beh.alt ? beh.alt[0] + (beh.alt[1] - beh.alt[0]) * (0.4 + 0.6 * rng()) : 1.5); // bias toward eye level
     let kind = beh.kind;
-    // medium-size shoaling fish sometimes travel as a group
-    if (kind === 'shoal' && sz * (n >= 20 ? 75 : 24) >= 7 && (lead || rng() < 0.55)) { kind = 'school'; plan.kind = 'school'; }
+    const night = sys.U ? sys.U.uNight.value : 0;
+    if (night > 0.55 && dielW(sp.key, 1) < 0.5 && ['school', 'shoal', 'hover', 'solo'].includes(kind)) { // after dark: shelter near the bottom
+      plan.sleepy = true; plan.altMul = 0.35;
+      if (kind === 'school' || kind === 'solo') { kind = 'shoal'; plan.kind = 'shoal'; plan.zone = 'floor'; }
+    }
+    if (sp.key === 'humpback' && !lead && rng() < 0.35) { plan.calf = true; plan.n = n = 2; plan.kind = 'pod'; plan.spacing = 0.45; plan.interest = 1; }
+    if (sp.key === 'spinyLobster' && rng() < 0.3) { plan.walk = 'queue'; plan.n = n = 5 + Math.floor(rng() * 8); } // migrating in single file
+    if (kind === 'shoal' && !plan.sleepy && sz * (n >= 20 ? 75 : 24) >= 7 && (lead || rng() < 0.55)) { kind = 'school'; plan.kind = 'school'; }
     const eye = () => rr([-1, 0.6]);        // camera height (relative to the path)
-    if (kind === 'shoal' || kind === 'hover' || kind === 'colony' || kind === 'peek' || kind === 'octo' || kind === 'rest') {
+    if (kind === 'shoal' || kind === 'hover' || kind === 'colony' || kind === 'peek' || kind === 'octo' || kind === 'rest' || kind === 'walk' || kind === 'bed') {
       // bottom life right under / beside the path: reef fish picking at the bottom, rays on the sand, octopus
       plan.l0 = latLim(side * rr([0, kind === 'rest' && sz > 1.5 ? 5 : 3.5]));
       plan.h0 = eye();
@@ -407,10 +646,17 @@ export class Director {
       plan.l0 = latLim(l);
       if (beh.zone === 'ceiling' && route !== 'hold' && rng() < 0.5) plan.zone = 'mid'; // penguins also swoop past at eye level
     }
+    // the wall: hammerheads out in the blue on the open side, anthias clouds hanging on the wall face
+    const wallW = ws.find((x) => x.key === 'wall');
+    if (wallW && wallW.w > 0.5) {
+      const s0 = plan.s0, px = sh.pathX(s0), side = sh.floorAt(px + 14, s0) > sh.floorAt(px - 14, s0) ? 1 : -1;
+      if (beh.open) { plan.l0 = -side * rr([18, 34]); plan.h0 = rr([-7, -1]); }
+      if ((sp.key === 'anthias' || sp.key === 'purpleAnthias') && rng() < 0.7) { plan.face = side; plan.noSeek = true; plan.h0 = rr([-2, 2]); }
+    }
     // validate water column at the spawn point; shrink lateral offset if needed
     const reg = sys.env && sys.env.obstacles;
     // floor dwellers find a free spot locally (beside / on top of rocks); only mid-water groups are checked here
-    const local = ['shoal', 'hover', 'rest', 'octo', 'colony', 'peek'].includes(plan.kind || beh.kind);
+    const local = ['shoal', 'hover', 'rest', 'octo', 'colony', 'peek', 'walk', 'bed'].includes(plan.kind || beh.kind);
     const OFF = [[0, 0], [1.5, 0], [-1.5, 0], [0, 4], [3, 0], [-3, 0], [0, -4], [4.5, 3]];
     const l0 = plan.l0, s0 = plan.s0;
     for (let k = 0; k < OFF.length; k++) {

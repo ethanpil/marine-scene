@@ -310,16 +310,22 @@ function ribbon(gb, pts, widths, g, twist = 0, frill = 0) {
 }
 
 // ---------- detail ----------
+// Levels: species det 0..2 map to levels 1..3; LOD -1 (beyond ~40 m) drops one level, LOD +1
+// (close passes within a few metres) adds one: smooth silhouettes and round eyes up close.
 const DET = [
+  { nL: 10, nA: 6, fu: 2, fw: 1, cu: 3, eLat: 3, eLon: 5 },
   { nL: 14, nA: 8, fu: 3, fw: 1, cu: 4, eLat: 4, eLon: 6 },
   { nL: 22, nA: 12, fu: 5, fw: 2, cu: 6, eLat: 5, eLon: 8 },
   { nL: 34, nA: 18, fu: 8, fw: 3, cu: 10, eLat: 7, eLon: 12 },
+  { nL: 46, nA: 26, fu: 10, fw: 3, cu: 12, eLat: 10, eLon: 18 },
 ];
+const levelOf = (sp, lod = 0) => Math.max(0, Math.min(4, (sp.det ?? 1) + 1 + lod));
+const detOf = (sp, lod = 0) => DET[levelOf(sp, lod)];
 
 // ---------- fish-like plan (fish, sharks, eels, rays, cetaceans, seals, penguins, turtles) ----------
-export function buildFish(sp) {
+export function buildFish(sp, lod = 0) {
   const gb = new GB();
-  const B = sp.body, det = DET[sp.det ?? 1];
+  const B = sp.body, det = detOf(sp, lod);
   const prof = bodyProfile(B);
   const parts = B.parts;
   const partFn = parts ? (t) => { for (const [a, b, p] of parts) if (t >= a && t <= b) return p; return 0; } : null;
@@ -474,15 +480,29 @@ function extras(gb, sp, prof, det) {
       tube(gb, pts, [0.004, 0.0035, 0.003, 0.0025, 0.002, 0], 4, () => [PART.BODY, -1, 0, 0]);
     }
   }
-  if (X.horns) { // narwhal-like / cephalic lobes handled by fins; here: crown spikes (seahorse unused)
+  if (X.stilts) { // tripod fish: two elongated pelvic rays + the lower caudal ray, tips on the sea floor
+    const H = sp.beh.perch ?? 2;
+    prof(0.38, o);
+    for (const s of [1, -1]) tube(gb, [[s * o.wid * 0.5, o.yc - o.bot * 0.85, 0.12], [s * 0.05, -H * 0.5, 0.15], [s * 0.1, -H, 0.2]], [0.007, 0.0045, 0], 4, () => [PART.PAIRED, -1, 0, 0]);
+    prof(prof.tEnd - 0.02, o);
+    const zc = 0.5 - prof.tEnd + 0.02;
+    tube(gb, [[0, o.yc - o.bot * 0.9, zc], [0, -H * 0.5, zc - 0.05], [0, -H, zc - 0.1]], [0.007, 0.0045, 0], 4, () => [PART.PAIRED, -1, 0, 0]);
+  }
+  if (X.feelers) { // tripod fish: long pectoral rays held up and forward like antennae
+    const Lf = X.feelers.len; prof(0.22, o);
+    for (const s of [1, -1]) tube(gb, [[s * o.wid * 0.8, o.yc + o.top * 0.3, 0.28], [s * 0.07, o.top + Lf * 0.45, 0.3 + Lf * 0.3], [s * 0.13, o.top + Lf * 0.62, 0.34 + Lf * 0.6]], [0.004, 0.003, 0], 4, () => [PART.PAIRED, -1, 0, 0]);
+  }
+  if (X.disc) { // remora: the flat, ridged sucking disc on top of the head
+    prof(0.14, o);
+    sphere(gb, 0, o.yc + o.top * 0.9, 0.5 - 0.14, 1, Math.max(3, det.eLat), Math.max(6, det.eLon), PART.BEAK, [0, 1, 0], [o.wid * 0.75, o.top * 0.22, 0.11], 0);
   }
 }
 
 // ---------- jellyfish ----------
-export function buildJelly(sp) {
-  const gb = new GB(), J = sp.jelly, det = sp.det ?? 1;
+export function buildJelly(sp, lod = 0) {
+  const gb = new GB(), J = sp.jelly, lv = levelOf(sp, lod), det = lv <= 1 ? 0 : 1;
   const rng = mulberry32(J.seed ?? 5);
-  const nR = det === 0 ? 7 : 10, nA = det === 0 ? 16 : 24;
+  const nR = lv <= 1 ? 7 : lv >= 3 ? 13 : 10, nA = lv <= 1 ? 16 : lv >= 3 ? 32 : 24;
   const H = J.h, thMax = J.th ?? 1.7;
   const rings = [];
   const rN = thMax > PI / 2 ? 1 : Math.sin(thMax), rimR = 0.5 * Math.sin(thMax) / rN + (J.flare ?? 0) * 0.5;
@@ -556,8 +576,8 @@ export function buildSiphonophore(sp) {
 }
 
 // ---------- squid / cuttlefish ----------
-export function buildSquid(sp) {
-  const gb = new GB(), S = sp.squid, det = DET[sp.det ?? 1];
+export function buildSquid(sp, lod = 0) {
+  const gb = new GB(), S = sp.squid, det = detOf(sp, lod);
   const prof = bodyProfile(sp.body);
   loft(gb, prof, det.nL, det.nA);
   const o = {}, s3 = [0, 0, 0];
@@ -612,8 +632,8 @@ export function buildSquid(sp) {
 }
 
 // ---------- octopus (upright, resting on the floor; local +y up, +z front) ----------
-export function buildOctopus(sp) {
-  const gb = new GB(), det = DET[sp.det ?? 1], O = sp.octo || {};
+export function buildOctopus(sp, lod = 0) {
+  const gb = new GB(), det = detOf(sp, lod), O = sp.octo || {};
   const lat = det.eLat + 3, lon = det.eLon + 4;
   sphere(gb, 0, 0.26, -0.12, 0.15, lat, lon, PART.BODY, [0, 0.6, -0.8], [0.8, 1, 1], 0);
   sphere(gb, 0, 0.12, 0.02, 0.1, lat - 1, lon, PART.BODY, [0, 1, 0], [1, 0.8, 1]);
@@ -635,8 +655,8 @@ export function buildOctopus(sp) {
 }
 
 // ---------- seahorse (upright: local +y up, snout toward +z) ----------
-export function buildSeahorse(sp) {
-  const gb = new GB(), det = DET[sp.det ?? 1];
+export function buildSeahorse(sp, lod = 0) {
+  const gb = new GB(), det = detOf(sp, lod);
   const spine = [[0, 0.40, -0.01], [0, 0.34, 0.03], [0, 0.26, 0.055], [0, 0.16, 0.06], [0, 0.05, 0.035], [0, -0.06, -0.01],
     [0, -0.17, -0.035], [0, -0.27, -0.02], [0, -0.33, 0.03], [0, -0.32, 0.085], [0, -0.27, 0.095], [0, -0.245, 0.06]];
   const rad = [0.0, 0.045, 0.06, 0.075, 0.075, 0.06, 0.04, 0.028, 0.02, 0.014, 0.009, 0];
@@ -668,13 +688,173 @@ export function buildSeahorse(sp) {
   return gb.finish();
 }
 
-export function buildSpecies(sp) {
+// ---------- walkers: local +y up, feet on y = 0, +z = direction of travel ----------
+// Legs and antennae are PART.ARM with aG = (6, band 0/1, index, fraction along it): |index| 1..9 legs
+// (sign = side, stepping in a metachronal wave in the shader), |index| >= 10 antennae / papillae (sway).
+function leg(gb, pts, r0, r1, sides, idx, band = true) {
+  const n = pts.length, rad = [], cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
+  const Lt = cum[n - 1] || 1;
+  for (let i = 0; i < n; i++) rad.push(i === n - 1 ? 0 : r0 + (r1 - r0) * (cum[i] / Lt));
+  tube(gb, pts, rad, sides, (i) => [PART.ARM, band ? Math.floor((cum[i] / Lt) * 3.999) & 1 : 0, idx, cum[i] / Lt]);
+}
+const flatY = (T, y) => T.map(() => y);
+
+// Crab: walks sideways, so the wide carapace lies along local z; eyes and claws face +x.
+export function buildCrab(sp, lod = 0) {
+  const gb = new GB(), L = detOf(sp, lod), C = sp.crab || {}, sides = L.nA >= 12 ? 6 : 4;
+  const cw = C.w ?? 0.33, cl = C.l ?? 0.25, ch = C.h ?? 0.1, cy = C.y ?? 0.15;
+  sphere(gb, 0, cy, 0, 1, L.eLat + 3, L.eLon + 6, PART.BODY, [0, 1, 0], [cl, ch, cw]);
+  for (const s of [1, -1]) { // eyes on stalks
+    tube(gb, [[cl * 0.8, cy + ch * 0.4, s * 0.06], [cl * 0.95, cy + ch * 1.15, s * 0.075]], [0.013, 0.01], 4, () => [PART.BODY, 0.6, 0, 0]);
+    sphere(gb, cl * 0.96, cy + ch * 1.3, s * 0.077, 0.019, L.eLat, L.eLon, PART.EYE, [1, 0.7, s * 0.4]);
+  }
+  const span = C.span ?? 0.52, kneeH = C.knee ?? 0.24, lr = C.legR ?? 0.024;
+  for (const s of [1, -1]) for (let k = 0; k < 4; k++) { // walking legs, knee raised, tips on the floor
+    const x0 = cl * (0.42 - k * 0.36), z0 = s * cw * 0.82;
+    const xk = x0 * 1.2 + (k - 1.5) * 0.04, zk = s * (cw + (span - cw) * 0.55);
+    const xt = x0 * 1.5 + (k - 1.5) * 0.1, zt = s * span;
+    leg(gb, [[x0, cy - ch * 0.25, z0], [(x0 + xk) / 2, (cy + kneeH) / 2 + 0.02, (z0 + zk) / 2], [xk, kneeH, zk], [(xk + xt) / 2, kneeH * 0.5, (zk + zt) / 2], [xt, 0, zt]], lr, lr * 0.45, sides, s * (k + 1));
+  }
+  const cs = C.claw ?? 1;
+  for (const s of [1, -1]) { // claws: arm, swollen palm, two fingers
+    const a0 = [cl * 0.7, cy - ch * 0.15, s * cw * 0.45], a1 = [cl * 1.12, cy + 0.02, s * cw * 0.62], a2 = [cl * 1.42, cy - 0.01, s * cw * 0.36];
+    tube(gb, [a0, a1, a2], [lr * 1.3 * cs, lr * 1.25 * cs, lr * 1.5 * cs], sides, () => [PART.BODY, 0.3, 0, 0]);
+    sphere(gb, a2[0] + 0.05 * cs, a2[1], a2[2], 0.065 * cs, Math.max(3, L.eLat), Math.max(6, L.eLon), PART.BODY, [1, 0, 0], [1, 0.55, 0.62], 0);
+    for (const f of [1, -1]) tube(gb, [[a2[0] + 0.1 * cs, a2[1] + f * 0.012 * cs, a2[2]], [a2[0] + 0.17 * cs, a2[1] + f * 0.004 * cs, a2[2] - s * 0.01]], [0.016 * cs, 0], 4, () => [PART.BEAK, 0, 0, 0]);
+  }
+  return gb.finish();
+}
+
+// Spiny lobster: carapace + segmented abdomen + tail fan, very long spiny antennae, 5 pairs of legs.
+export function buildLobster(sp, lod = 0) {
+  const gb = new GB(), L = detOf(sp, lod), X = sp.lobster || {}, sides = L.nA >= 12 ? 6 : 4, y0 = X.y ?? 0.13;
+  const T = [0, 0.03, 0.1, 0.2, 0.3, 0.38, 0.42, 0.5, 0.58, 0.66, 0.74, 0.8, 0.84];
+  const prof = bodyProfile({ st: { t: T,
+    top: [0.02, 0.068, 0.098, 0.11, 0.108, 0.092, 0.078, 0.079, 0.075, 0.069, 0.059, 0.045, 0],
+    bot: [0.015, 0.045, 0.065, 0.072, 0.07, 0.058, 0.05, 0.049, 0.045, 0.04, 0.034, 0.025, 0],
+    wid: [0.027, 0.078, 0.115, 0.128, 0.125, 0.108, 0.095, 0.1, 0.096, 0.088, 0.076, 0.061, 0], yc: flatY(T, y0) }, n: 2.3, nb: 2.8 });
+  loft(gb, prof, L.nL, L.nA);
+  const o = {}; prof(0.8, o);
+  fin(gb, { nU: Math.max(3, L.cu - 2), nW: L.fw + 1, pn: [0, 1, 0], part: PART.CAUDAL, vN: 0, thick: 0.05,
+    root: (u) => [(u - 0.5) * 2 * o.wid * 0.95, y0, 0.5 - 0.8],
+    dir: (u) => { const a = (u - 0.5) * 1.6; return [Math.sin(a), -0.06, -Math.cos(a)]; },
+    H: (u) => 0.18 * (0.82 + 0.18 * Math.cos((u - 0.5) * 3)) });
+  const N = L.nL > 20 ? 12 : 8, len = X.ant ?? 1.2;
+  for (const s of [1, -1]) {
+    const pts = [];
+    for (let i = 0; i <= N; i++) { const f = i / N; pts.push([s * (0.03 + 0.05 * f + 0.32 * f * f), y0 + 0.05 + 0.09 * Math.sin(f * 2.2) - 0.06 * f, 0.47 + len * f * (1 - 0.3 * f)]); }
+    leg(gb, pts, 0.022, 0.004, sides, s * 10);
+    leg(gb, [[s * 0.012, y0 + 0.03, 0.48], [s * 0.03, y0 + 0.08, 0.57], [s * 0.05, y0 + 0.09, 0.66]], 0.005, 0.002, 4, s * 11, false);
+    sphere(gb, s * 0.03, y0 + 0.055, 0.47, 0.012, L.eLat, L.eLon, PART.EYE, [s * 0.6, 0.4, 1]);
+    tube(gb, [[s * 0.022, y0 + 0.05, 0.44], [s * 0.034, y0 + 0.1, 0.5]], [0.01, 0], 4, () => [PART.BEAK, 0, 0, 0]);
+    for (let k = 0; k < 5; k++) {
+      const z0 = 0.5 - (0.12 + k * 0.055), dz = (2 - k) * 0.045;
+      leg(gb, [[s * 0.05, y0 - 0.04, z0], [s * 0.1, y0 + 0.005, z0 + dz * 0.4], [s * 0.13, y0 + 0.015, z0 + dz * 0.6], [s * 0.155, y0 * 0.45, z0 + dz * 0.85], [s * 0.17, 0, z0 + dz]], 0.011, 0.005, sides, s * (k + 1));
+    }
+  }
+  return gb.finish();
+}
+
+// Giant isopod: broad armoured body of overlapping plates, big compound eyes, 7 pairs of short legs.
+export function buildIsopod(sp, lod = 0) {
+  const gb = new GB(), L = detOf(sp, lod), y0 = 0.075;
+  const T = [0, 0.03, 0.08, 0.16, 0.3, 0.5, 0.7, 0.82, 0.9, 0.95];
+  const bumps = []; for (let k = 0; k < 7; k++) bumps.push(['t', 0.24 + k * 0.08, 0.018, 0.07]);
+  const prof = bodyProfile({ st: { t: T, top: [0.012, 0.04, 0.058, 0.068, 0.074, 0.075, 0.068, 0.054, 0.034, 0],
+    bot: [0.008, 0.014, 0.018, 0.02, 0.022, 0.022, 0.02, 0.016, 0.011, 0],
+    wid: [0.04, 0.12, 0.165, 0.195, 0.21, 0.215, 0.195, 0.155, 0.1, 0], yc: flatY(T, y0) }, n: 1.7, nb: 3.4, bumps });
+  loft(gb, prof, L.nL, L.nA);
+  const o = {}; prof(0.88, o);
+  fin(gb, { nU: Math.max(3, L.cu - 2), nW: L.fw, pn: [0, 1, 0], part: PART.CAUDAL, vN: 0, thick: 0.05,
+    root: (u) => [(u - 0.5) * 2 * o.wid * 0.9, y0, 0.5 - 0.88], dir: (u) => { const a = (u - 0.5) * 1.2; return [Math.sin(a), -0.05, -Math.cos(a)]; },
+    H: (u) => 0.08 * (0.7 + 0.3 * Math.cos((u - 0.5) * 3)) });
+  for (const s of [1, -1]) {
+    sphere(gb, s * 0.115, y0 + 0.03, 0.43, 0.036, L.eLat, L.eLon, PART.EYE, [s, 0.3, 0.5], [0.55, 0.75, 1.25]);
+    const pts = [];
+    for (let i = 0; i <= 8; i++) { const f = i / 8; pts.push([s * (0.05 + 0.22 * f), y0 + 0.02 + 0.03 * Math.sin(f * 3), 0.47 + 0.12 * f - 0.5 * f * f]); }
+    leg(gb, pts, 0.008, 0.003, 4, s * 10, false);
+    leg(gb, [[s * 0.03, y0 + 0.01, 0.48], [s * 0.06, y0 + 0.03, 0.56], [s * 0.08, y0 + 0.02, 0.6]], 0.006, 0.003, 4, s * 11, false);
+    for (let k = 0; k < 7; k++) {
+      const z0 = 0.5 - (0.16 + k * 0.095), dz = (3 - k) * 0.025;
+      leg(gb, [[s * 0.12, y0 - 0.012, z0], [s * 0.2, y0 + 0.01, z0 + dz * 0.5], [s * 0.245, y0 * 0.5, z0 + dz * 0.8], [s * 0.265, 0, z0 + dz]], 0.012, 0.006, 4, s * (k + 1), false);
+    }
+  }
+  return gb.finish();
+}
+
+// Sea pig (Scotoplanes): a plump holothurian on tube-feet "legs", with dorsal papillae waving like antennae.
+export function buildSeaPig(sp, lod = 0) {
+  const gb = new GB(), L = detOf(sp, lod), y0 = 0.1;
+  const T = [0, 0.05, 0.18, 0.45, 0.75, 0.92, 1];
+  const prof = bodyProfile({ st: { t: T, top: [0.02, 0.09, 0.13, 0.145, 0.13, 0.08, 0], bot: [0.015, 0.05, 0.075, 0.08, 0.075, 0.05, 0],
+    wid: [0.02, 0.09, 0.14, 0.155, 0.14, 0.085, 0], yc: flatY(T, y0) }, n: 2.1, nb: 3.0 });
+  loft(gb, prof, L.nL, L.nA);
+  const o = {};
+  for (const s of [1, -1]) {
+    for (let k = 0; k < 6; k++) { // tube feet
+      const t = 0.16 + k * 0.13; prof(t, o);
+      leg(gb, [[s * o.wid * 0.75, y0 - o.bot * 0.6, 0.5 - t], [s * (o.wid * 0.95 + 0.02), y0 * 0.45, 0.5 - t + 0.01], [s * (o.wid + 0.04), 0, 0.5 - t + 0.02]], 0.028, 0.012, 4, s * (k + 1), false);
+    }
+    prof(0.2, o); // two pairs of long dorsal papillae
+    leg(gb, [[s * 0.05, y0 + o.top * 0.9, 0.3], [s * 0.07, y0 + o.top + 0.12, 0.34], [s * 0.1, y0 + o.top + 0.25, 0.38]], 0.022, 0.008, 4, s * 10, false);
+    prof(0.3, o);
+    leg(gb, [[s * 0.06, y0 + o.top * 0.92, 0.2], [s * 0.09, y0 + o.top + 0.08, 0.22], [s * 0.12, y0 + o.top + 0.15, 0.24]], 0.018, 0.007, 4, s * 12, false);
+  }
+  return gb.finish();
+}
+
+// Dumbo octopus (local +y up): mantle with two ear-like fins, webbed umbrella of arms beneath.
+export function buildDumbo(sp, lod = 0) {
+  const gb = new GB(), L = detOf(sp, lod), lat = L.eLat + 3, lon = L.eLon + 6;
+  sphere(gb, 0, 0.3, -0.03, 0.15, lat, lon, PART.BODY, [0, 1, -0.2], [0.95, 1.2, 1]);
+  sphere(gb, 0, 0.15, 0, 0.12, lat - 1, lon, PART.BODY, [0, 1, 0], [1.05, 0.85, 1.05]);
+  for (const s of [1, -1]) sphere(gb, s * 0.085, 0.17, 0.075, 0.028, L.eLat, L.eLon, PART.EYE, [s, 0.2, 0.6]);
+  sphere(gb, 0, 0.03, 0, 1, lat, lon * 2, PART.BODY, [0, 1, 0], [0.4, 0.07, 0.4]); // the web
+  const n = L.nL > 20 ? 8 : 5;
+  for (let k = 0; k < 8; k++) { // arm ridges under the web, tips curling past the rim
+    const a = ((k + 0.5) / 8) * PI * 2, pts = [], rad = [];
+    for (let i = 0; i <= n; i++) { const f = i / n, r = 0.05 + 0.4 * f; pts.push([Math.cos(a) * r, 0.0 - 0.02 * f + 0.05 * Math.max(0, f - 0.85) * 6, Math.sin(a) * r]); rad.push(i === n ? 0 : 0.03 * (1 - 0.7 * f)); }
+    tube(gb, pts, rad, 4, (i) => [PART.ARM, 0, k, (i / n) * 0.4]);
+  }
+  for (const s of [1, -1]) fin(gb, { nU: 4, nW: Math.max(1, L.fw), pn: [0, 0, 1], part: PART.PAIRED, vN: 0, thick: 0.06,
+    root: (u) => [s * 0.125, 0.27 + u * 0.1, -0.03], dir: () => [s * 0.96, 0.26, -0.1], H: (u) => 0.13 * ctrl(FIN_SHAPES.paddle, u) });
+  return gb.finish();
+}
+
+// Cassiopea (local +y up): the bell lies upside down on the mud; eight branched, frilly oral arms reach up.
+export function buildCassiopea(sp, lod = 0) {
+  const gb = new GB(), L = detOf(sp, lod), rng = mulberry32(31);
+  sphere(gb, 0, 0.025, 0, 1, Math.max(4, L.eLat), L.eLon * 2 + 8, PART.BODY, [0, 1, 0], [0.5, 0.05, 0.5]);
+  const N = L.nL > 20 ? 6 : 4;
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * PI * 2 + 0.2, ca = Math.cos(a), sa = Math.sin(a), pts = [], rad = [];
+    for (let i = 0; i <= N; i++) { const f = i / N; pts.push([ca * (0.04 + 0.3 * f), 0.05 + 0.13 * Math.sin(f * 1.7), sa * (0.04 + 0.3 * f)]); rad.push(i === N ? 0 : 0.034 * (1 - 0.55 * f)); }
+    tube(gb, pts, rad, 5, (i) => [PART.ARM, 0, k, (i / N) * 0.35]);
+    for (let b = 0; b < 4; b++) { // frilly side branches tipped with vesicles
+      const f = 0.3 + b * 0.17, p = pts[Math.min(N, Math.round(f * N))], side = b % 2 ? 1 : -1;
+      const bx = ca * Math.cos(side * 0.9) - sa * Math.sin(side * 0.9), bz = sa * Math.cos(side * 0.9) + ca * Math.sin(side * 0.9);
+      const q1 = [p[0] + bx * 0.06, p[1] + 0.05, p[2] + bz * 0.06], q2 = [p[0] + bx * 0.1, p[1] + 0.06 + rng() * 0.03, p[2] + bz * 0.1];
+      tube(gb, [p, q1, q2], [0.018, 0.013, 0], 4, () => [PART.ARM, 0.3, k + b, f * 0.35]);
+      sphere(gb, q2[0], q2[1], q2[2], 0.022 + rng() * 0.012, 3, 5, PART.ARM, [0, 1, 0], [1, 0.8, 1], 0);
+    }
+  }
+  return gb.finish();
+}
+
+export function buildSpecies(sp, lod = 0) {
   switch (sp.plan) {
-    case 'jelly': return buildJelly(sp);
+    case 'jelly': return buildJelly(sp, lod);
     case 'siphon': return buildSiphonophore(sp);
-    case 'squid': return buildSquid(sp);
-    case 'octopus': return buildOctopus(sp);
-    case 'seahorse': return buildSeahorse(sp);
-    default: return buildFish(sp);
+    case 'squid': return buildSquid(sp, lod);
+    case 'octopus': return buildOctopus(sp, lod);
+    case 'seahorse': return buildSeahorse(sp, lod);
+    case 'crab': return buildCrab(sp, lod);
+    case 'lobster': return buildLobster(sp, lod);
+    case 'isopod': return buildIsopod(sp, lod);
+    case 'seapig': return buildSeaPig(sp, lod);
+    case 'dumbo': return buildDumbo(sp, lod);
+    case 'cassiopea': return buildCassiopea(sp, lod);
+    default: return buildFish(sp, lod);
   }
 }

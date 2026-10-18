@@ -949,6 +949,203 @@ S.dugong = merge(S.manatee, {
   col: C(0x8a807a, 0xa89a90, 0x6a625c, 0x8a807a), size: [2.4, 3],
 });
 
+
+// ---------- soft coral garden, the wall, mangroves, the abyssal plain, night life ----------
+const WALKER = { finEdge: 0, finRays: 0, iris: 0.3, glowMode: 0, glow: 0, sheen: 0.3, rough: 0.35, pat2: [0, 1, 0] };
+Object.assign(SPECIES, {
+  // ---- soft coral garden ----
+  purpleAnthias: merge(S.anthias, {
+    col: C(0x9a3ad0, 0xd08af0, 0xffd34a, 0xa040d8, 0, 0xffd040), pat: [12, 0.6, 0.1], finEdge: 0.8,
+    beh: { n: [40, 120], spread: 8 }, size: [0.07, 0.11],
+  }),
+  glassfish: merge(S.sweeper, {
+    body: { depth: 0.38, width: 0.28, nose: 0.5, tail: 1.5 },
+    col: C(0xc89048, 0xf2dcb0, 0xe8b070, 0xe8c890), sheen: 0.95, eye: { r: 0.075 },
+    beh: { kind: 'shoal', n: [120, 260], spread: 3.2, alt: [0.5, 2.6], speed: [0.12, 0.3], zone: 'floor' }, size: [0.05, 0.08],
+  }),
+  bannerfish: fish({
+    body: { depth: 0.62, width: 0.2, tm: 0.36, nose: 0.85, ped: 0.11, tail: 1.5, snout: 0.15 },
+    fins: { dorsal: [{ t0: 0.24, t1: 0.68, h: 0.5, shape: 'idol', sweep: 1.5 }], anal: [{ t0: 0.44, t1: 0.7, h: 0.16, shape: 'round', sweep: 0.8 }], caudal: { shape: 'truncate', size: 0.16 }, pelv: { t: 0.3, h: 0.1 } },
+    col: C(0xf4f2ec, 0xffffff, 0x121212, 0xf6d43a, 0, 0x121212), pat: [1, 2.6, 0.3], finEdge: 0.2,
+    beh: { ...SCHOOL, n: [8, 40], speed: [0.25, 0.5], zone: 'floor', alt: [2, 6], routes: { hold: 3, along: 1 } }, size: [0.15, 0.22],
+  }),
+  cleanerWrasse: fish({
+    body: { depth: 0.2, width: 0.5, tm: 0.38, nose: 0.85, tail: 1.4, ped: 0.12, snout: 0.05 },
+    fins: { dorsal: [{ t0: 0.28, t1: 0.74, h: 0.04, shape: 'long' }], anal: [{ t0: 0.52, t1: 0.74, h: 0.035, shape: 'long' }], caudal: { shape: 'rounded', size: 0.16 } },
+    col: C(0x2a5ad8, 0xe8f0f8, 0x0c0c10, 0x2a5ad8, 0xf0e8b0, 0x0c0c10), pat: [12, 0.0, 0.11], pat2: [22, 0.4, 1], finEdge: 0.3,
+    beh: { kind: 'hover', n: [2, 5], speed: [0.1, 0.3], zone: 'floor', alt: [0.5, 2.5], spread: 2.5 }, size: [0.07, 0.1],
+  }),
+  // ---- the wall ----
+  hammerheadSchool: merge(S.hammerhead, { beh: { n: [10, 26], speed: [0.7, 1.1], dist: [15, 40], routes: { cross: 2, oncoming: 1, along: 1 }, open: true }, hl: false }),
+  potatoGrouper: fish({
+    det: 2,
+    body: { depth: 0.31, width: 0.6, tm: 0.33, nose: 0.62, tail: 1.3, ped: 0.15, snout: 0.15 },
+    fins: { dorsal: [{ t0: 0.28, t1: 0.75, h: 0.08, shape: 'long' }], caudal: { shape: 'rounded', size: 0.18 }, pect: { h: 0.15 } },
+    col: C(0xb8b4a8, 0xd8d4c8, 0x3a3630, 0xa8a498, 0, 0x2a2a2a), pat: [3, 7, 0.36], pat2: [25, 60, 0.6], eye: { r: 0.022 },
+    mot: { amp: 0.045, beat: 0.9 }, beh: { ...SOLO, speed: [0.2, 0.45], alt: [1, 4] }, size: [1.2, 1.9], sheen: 0.1, rough: 0.5,
+  }),
+  hawksbill: merge(S.greenTurtle, {
+    body: { bumps: [['t', 0.06, 0.03, -0.15]] },
+    col: C(0x6a4220, 0xe8d8a8, 0xc8902a, 0x5a3a1e, 0x2a1a0c, 0x2a1a08), pat: [20, 6, 0], pat2: [7, 9, 0.55],
+    beh: { kind: 'rest', n: [1, 1], spread: 3, lift: [3.5, 5.5], speed: [0.4, 0.7], alt: [0.5, 2] }, size: [0.7, 0.9],
+  }),
+  turtleRest: merge(S.greenTurtle, { beh: { kind: 'rest', n: [1, 1], spread: 3, lift: [3.5, 5.5], speed: [0.4, 0.7], alt: [0.5, 2] } }),
+  // ---- mangroves ----
+  juvSnapper: merge(S.snapper, {
+    col: C(0x8a8a78, 0xe0e0d4, 0x3a3428, 0xd06a3a, 0, 0x2a2018), pat: [8, 0.1, 0.02], pat2: [1, 7, 0.15],
+    beh: { n: [35, 90], speed: [0.2, 0.4], zone: 'floor', alt: [0.4, 1.6] }, size: [0.09, 0.16],
+  }),
+  grunt: fish({
+    det: 0,
+    body: { depth: 0.34, width: 0.42, tm: 0.36, nose: 0.75, tail: 1.5 },
+    fins: { dorsal: [{ t0: 0.28, t1: 0.36, h: 0.08, shape: 'tri' }, { t0: 0.38, t1: 0.72, h: 0.06, shape: 'long' }], caudal: { shape: 'emarginate', size: 0.2 } },
+    col: C(0xe8c040, 0xf6e8a0, 0x3a7ad8, 0xe8c040), pat: [2, 9, 0.3], sheen: 0.45,
+    beh: { ...SCHOOL, n: [35, 90], speed: [0.2, 0.45], zone: 'floor', alt: [0.4, 1.8], routes: { hold: 3 } }, size: [0.12, 0.22],
+  }),
+  juvBarracuda: merge(S.barracuda, { beh: { n: [4, 14], speed: [0.2, 0.5], zone: 'surface' }, size: [0.25, 0.45] }),
+  cassiopea: {
+    plan: 'cassiopea', det: 1,
+    col: C(0x7a8a68, 0xa8b098, 0xeef2e4, 0x7a9a80, 0x8aa8a8, 0x8ae0f0), pat: [3, 9, 0.2], pat2: [17, 8, 0.2], cs: [-2, 0],
+    finEdge: 0, finRays: 0, iris: 0, glowMode: 0, glow: 0, sheen: 0.25, rough: 0.5,
+    mot: { mode: 4, amp: 0.12, waves: 0, c0: 0, beat: 0, idle: 0.75 },
+    beh: { kind: 'bed', n: [8, 26], spread: 6, upright: true, zone: 'floor' }, size: [0.15, 0.28],
+  },
+  lemonShark: merge(SHARK, {
+    body: { depth: 0.17, nose: 0.6, tm: 0.34 },
+    fins: { dorsal: [{ t0: 0.4, t1: 0.52, h: 0.1, shape: 'shark', sweep: 0.7 }, { t0: 0.66, t1: 0.74, h: 0.085, shape: 'shark', sweep: 0.7 }] },
+    col: { d: 0xa89060, b: 0xf0e8d0, a: 0x5a4a30 }, cs: [-0.1, 0.3], sheen: 0.12,
+    beh: { ...POD, n: [2, 5], speed: [0.5, 0.9], zone: 'floor', alt: [0.3, 1.0], dist: [4, 15], routes: { cross: 2, oncoming: 1, hold: 1 } }, size: [0.6, 0.9],
+  }),
+  needlefish: merge(EEL, {
+    det: 0, body: { depth: 0.07, width: 0.75, tm: 0.45, nose: 1.4, tail: 1.2, ped: 0.15, tEnd: 0.9, segL: 1.2 },
+    fins: { dorsal: [{ t0: 0.72, t1: 0.86, h: 0.035, shape: 'round' }], anal: [{ t0: 0.7, t1: 0.86, h: 0.035, shape: 'round' }], pect: { t: 0.2, h: 0.03 }, caudal: { shape: 'forked', size: 0.08 } },
+    extra: { bill: { len: 0.22, r: 0.012, part: 0 } },
+    col: C(0x3a7a78, 0xe8f2f0, 0x1a4a5a, 0x5a9a90), pat: [12, 0.25, 0.05], sheen: 0.95, eye: { r: 0.012, t: 0.06 },
+    mot: { amp: 0.04, waves: 1.0, c0: 0.2, beat: 1.0, idle: 0.3 },
+    beh: { ...SCHOOL, n: [4, 12], speed: [0.3, 0.8], zone: 'surface', routes: { hold: 2, cross: 1, along: 1 } }, size: [0.4, 0.7],
+  }),
+  archerfish: fish({
+    body: { depth: 0.42, width: 0.35, tm: 0.42, nose: 0.85, tail: 1.4, ped: 0.13, snout: -0.2 },
+    fins: { dorsal: [{ t0: 0.55, t1: 0.7, h: 0.09, shape: 'round', sweep: 0.5 }], anal: [{ t0: 0.5, t1: 0.72, h: 0.1, shape: 'round', sweep: 0.6 }], caudal: { shape: 'truncate', size: 0.18 } },
+    col: C(0xd8dcd0, 0xf6f8f2, 0x141414, 0xc8c8a8, 0, 0x141414), pat: [21, 5, 0.5], sheen: 0.7, eye: { r: 0.045, v: 0.4 },
+    beh: { ...SCHOOL, n: [3, 8], speed: [0.15, 0.4], zone: 'surface', routes: { hold: 3, along: 1 } }, size: [0.15, 0.25],
+  }),
+  saltwaterCroc: fish({
+    det: 2,
+    body: { ...ST([0, 0.02, 0.06, 0.1, 0.14, 0.17, 0.2, 0.24, 0.3, 0.38, 0.46, 0.54, 0.64, 0.74, 0.84, 0.93, 1.0],
+      [0.008, 0.014, 0.018, 0.02, 0.024, 0.034, 0.036, 0.034, 0.045, 0.052, 0.05, 0.042, 0.035, 0.028, 0.02, 0.012, 0],
+      [0.006, 0.01, 0.012, 0.014, 0.016, 0.022, 0.026, 0.03, 0.04, 0.048, 0.046, 0.035, 0.026, 0.02, 0.014, 0.008, 0],
+      [0.014, 0.022, 0.026, 0.03, 0.036, 0.05, 0.052, 0.046, 0.065, 0.078, 0.074, 0.05, 0.03, 0.02, 0.013, 0.008, 0]), n: 2.4, nb: 3.0 },
+    fins: { dorsal: [{ t0: 0.24, t1: 0.99, h: 0.012, shape: 'spiny', spikes: 24, sweep: 0.1 }], anal: null, pect: null, pelv: null, caudal: null,
+      flip: { t: 0.27, span: 0.03, a: -0.75, h: 0.1, dip: 1.0, sweep: 1.4, shape: 'paddle', thick: 0.2, part: 7 },
+      flip2: { t: 0.5, span: 0.03, a: -0.75, h: 0.11, dip: 1.0, sweep: 1.5, shape: 'paddle', thick: 0.2, part: 7 } },
+    eye: { t: 0.15, v: 0.95, r: 0.008, axis: [0.4, 1, 0.3] },
+    extra: { teeth: { t: 0.1, n: 18, len: 0.008, r: 0.002 } },
+    col: C(0x4a4e30, 0xd8d0a0, 0x1e2014, 0x404428, 0, 0xc8b040), pat: [15, 14, 0.35], pat2: [4, 60, 0.28], cs: [-0.45, 0.35], sheen: 0.12, rough: 0.55, iris: 0.8,
+    mot: { mode: 0, amp: 0.09, waves: 0.75, c0: 0.04, beat: 0.5, idle: 0.2 },
+    beh: { ...SOLO, n: [1, 1], speed: [0.3, 0.6], zone: 'surface', skim: true, dist: [6, 20], routes: { cross: 2, oncoming: 1, along: 1 } }, size: [3.2, 4.5], hl: true, interest: 0.9,
+  }),
+  // ---- abyssal plain (lamp-lit) ----
+  tripodFish: fish({
+    det: 1,
+    body: { depth: 0.13, width: 0.7, tm: 0.25, nose: 0.55, tail: 1.2, ped: 0.15, tEnd: 0.85, snout: 0.1 },
+    fins: { dorsal: [{ t0: 0.32, t1: 0.42, h: 0.08, shape: 'tri' }], anal: [{ t0: 0.6, t1: 0.75, h: 0.04, shape: 'long' }], pelv: null, pect: null, caudal: { shape: 'forked', size: 0.16 } },
+    extra: { stilts: true, feelers: { len: 0.5 } },
+    eye: { t: 0.08, v: 0.45, r: 0.012 },
+    col: C(0x3a3a40, 0x5a5a62, 0, 0x2a2a30, 0, 0xc0c8d0), cs: [-0.3, 0.1], sheen: 0.35, rough: 0.5,
+    mot: { amp: 0.05, beat: 1.0, idle: 0.2 },
+    beh: { kind: 'rest', n: [3, 8], spread: 14, lift: [2.5, 4], speed: [0.3, 0.6], alt: [0.6, 1.2], perch: 2.0 }, size: [0.28, 0.36], interest: 0.55,
+  }),
+  seaPig: { plan: 'seapig', det: 1, ...WALKER,
+    col: C(0xd8a0b0, 0xf0d0d8, 0xb06880, 0xe8b8c8, 0, 0x804060), pat: [6, 7, 0.55], cs: [-0.6, 0.2], sheen: 0.5, rough: 0.3,
+    mot: { mode: 10, amp: 0.6, waves: 0, c0: 0, beat: 7, idle: 0.15 },
+    beh: { kind: 'walk', n: [12, 34], spread: 7, speed: [0.02, 0.05], walk: 'herd' }, size: [0.1, 0.16],
+  },
+  dumbo: {
+    plan: 'dumbo', det: 1,
+    col: C(0xc88a7c, 0xe0b0a4, 0xa05a50, 0xd89a8c, 0, 0x201010), pat: [6, 5, 0.55], pat2: [0, 1, 0], cs: [-0.2, 0.3],
+    finEdge: 0, finRays: 0, iris: 0.6, glowMode: 0, glow: 0, sheen: 0.4, rough: 0.35,
+    mot: { mode: 4, amp: 0.08, waves: 0, c0: 0, beat: 0, idle: 0.35 },
+    beh: { kind: 'drift', n: [1, 2], speed: [0.05, 0.12], zone: 'floor', alt: [0.6, 2.2], spread: 8 }, size: [0.2, 0.32],
+  },
+  hagfish: merge(EEL, {
+    body: { depth: 0.07, width: 0.85, tm: 0.15, nose: 0.4, tail: 0.9, ped: 0.3, tEnd: 0.95 },
+    fins: { dorsal: [{ t0: 0.7, t1: 0.99, h: 0.015, shape: 'long' }], anal: [{ t0: 0.75, t1: 0.99, h: 0.012, shape: 'long' }], pect: null, caudal: { shape: 'rounded', size: 0.04 } },
+    extra: { barbels: { len: 0.05 } }, eye: { r: 0.004, t: 0.04 },
+    col: C(0xb08a8a, 0xd0b0a8, 0x8a6a6a, 0xb08a8a), pat: [6, 6, 0.6], cs: [-0.5, 0.1], sheen: 0.55, rough: 0.25, iris: 0,
+    mot: { amp: 0.09, waves: 1.6, c0: 0.3, beat: 1.8, idle: 1.0 },
+    beh: { kind: 'hover', n: [12, 36], speed: [0.1, 0.3], zone: 'floor', alt: [0.05, 0.8], spread: 3 }, size: [0.4, 0.6],
+  }),
+  giantIsopod: { plan: 'isopod', det: 1, ...WALKER,
+    col: C(0xb4a4ac, 0xd8ccce, 0x6a5a62, 0xa8989e, 0, 0x2a3a30), pat: [1, 10, 0.12], pat2: [25, 50, 0.6], cs: [-0.5, 0.3], iris: 0.1, sheen: 0.35,
+    mot: { mode: 10, amp: 0.6, waves: 0, c0: 0, beat: 8, idle: 0.1 },
+    beh: { kind: 'walk', n: [1, 3], spread: 6, speed: [0.04, 0.09], walk: 'wander' }, size: [0.25, 0.4],
+  },
+  glassSquid: fish({
+    plan: 'squid', det: 1, translucent: true,
+    body: ST([0, 0.04, 0.15, 0.35, 0.5, 0.58, 0.62, 0.66, 0.68], [0, 0.03, 0.06, 0.07, 0.065, 0.05, 0.045, 0.05, 0], [0, 0.03, 0.06, 0.07, 0.065, 0.05, 0.045, 0.05, 0], [0, 0.03, 0.06, 0.07, 0.065, 0.05, 0.045, 0.05, 0]),
+    squid: { fin: { t0: 0.0, t1: 0.08, h: 0.05, shape: 'round', sweep: 0.2 }, eyeT: 0.63, eyeR: 0.028, armLen: 0.16, armR: 0.006, spread: 0.3 },
+    col: C(0xe8ecf4, 0xf0f2f8, 0xc06a40, 0xe0e8f4, 0, 0x203040), pat: [12, 0.0, 0.08], cs: [-2, 0], iris: 0.2, sheen: 0.22, glowMode: 0,
+    mot: { mode: 5, amp: 0.5, beat: 0.4, idle: 0.4 },
+    beh: { kind: 'school', n: [1, 3], speed: [0.05, 0.2], zone: 'mid', routes: { hold: 3 } }, size: [0.2, 0.35],
+  }),
+  sleeperShark: merge(S.greenlandShark, { col: { d: 0x4a4038, b: 0x5a5048, a: 0x9aa8b0 }, beh: { ...GIANT, speed: [0.25, 0.45], zone: 'floor', alt: [1.5, 4], dist: [8, 25] }, size: [3.2, 4.4], hemi: undefined }),
+  deepCrab: { plan: 'crab', det: 1, ...WALKER, crab: { w: 0.3, l: 0.24, span: 0.68 },
+    col: C(0xd0602a, 0xf0b890, 0xe88a50, 0xc8582a, 0, 0x2a1008), pat: [25, 30, 0.6], cs: [-0.3, 0.3], iris: 0.2,
+    mot: { mode: 10, amp: 0.8, waves: 0, c0: 0, beat: 8, idle: 0.1 },
+    beh: { kind: 'walk', n: [2, 6], spread: 5, speed: [0.05, 0.14], walk: 'wander' }, size: [0.25, 0.4],
+  },
+  // ---- night life ----
+  spinyLobster: { plan: 'lobster', det: 1, ...WALKER,
+    col: C(0x8a4a2c, 0xd8a878, 0xf0d8a0, 0x9a5a34, 0xf8e8c8, 0x3a1a0c), pat: [1, 13, 0.1], pat2: [3, 22, 0.2], cs: [-0.4, 0.3],
+    mot: { mode: 10, amp: 0.7, waves: 0, c0: 0, beat: 8, idle: 0.12 },
+    beh: { kind: 'walk', n: [1, 5], spread: 5, speed: [0.06, 0.15], walk: 'wander' }, size: [0.35, 0.5],
+  },
+  soldierfish: fish({
+    body: { depth: 0.42, width: 0.38, tm: 0.34, nose: 0.55, tail: 1.5, ped: 0.1 },
+    fins: { dorsal: [{ t0: 0.24, t1: 0.46, h: 0.1, shape: 'spiny', spikes: 10 }, { t0: 0.5, t1: 0.66, h: 0.09, shape: 'round' }], anal: [{ t0: 0.55, t1: 0.68, h: 0.09 }], caudal: { shape: 'forked', size: 0.22 } },
+    col: C(0xc8281a, 0xe86a50, 0x701008, 0xd83a20, 0, 0xf0f0f0), pat: [8, 0.17, 0.035], finEdge: 0.8, sheen: 0.6, eye: { r: 0.075 }, iris: 0.4,
+    beh: { ...SHOAL, n: [6, 20], alt: [0.5, 2.5], spread: 4, speed: [0.15, 0.4] }, size: [0.15, 0.22],
+  }),
+  whitetipNight: merge(S.whitetip, { beh: { kind: 'pod', n: [2, 6], zone: 'floor', alt: [0.3, 1.5], speed: [0.6, 1.1], dist: [4, 15], routes: { cross: 2, hold: 1, oncoming: 1 } } }),
+  morayNight: merge(S.moray, { mot: { mode: 0, amp: 0.075, waves: 1.3, c0: 0.3, beat: 1.4, idle: 0.6 }, beh: { kind: 'solo', n: [1, 1], zone: 'floor', alt: [0.2, 1.0], speed: [0.25, 0.5], dist: [3, 12], routes: { cross: 2, hold: 1 } } }),
+  // ---- hitchhikers ----
+  remora: fish({
+    body: { depth: 0.13, width: 0.75, tm: 0.38, nose: 0.6, tail: 1.4, ped: 0.13, snout: -0.25 },
+    fins: { dorsal: [{ t0: 0.52, t1: 0.8, h: 0.05, shape: 'long', sweep: 0.3 }], anal: [{ t0: 0.52, t1: 0.8, h: 0.05, shape: 'long', sweep: 0.3 }], caudal: { shape: 'emarginate', size: 0.13 } },
+    extra: { disc: true },
+    col: C(0x4a4a4c, 0x8a8a88, 0x101012, 0x3a3a3c, 0xe8e8e4, 0x9a8a88), pat: [12, 0.0, 0.14], pat2: [12, 0.24, 0.035], cs: [-0.2, 0.3], sheen: 0.25,
+    mot: { amp: 0.04, beat: 1.0, idle: 0.6 },
+    beh: { kind: 'attach', n: [1, 4], speed: [0.5, 1] }, size: [0.35, 0.6],
+  }),
+});
+SPECIES.reefCrab = merge(SPECIES.deepCrab, { col: C(0xe8d8b8, 0xf6eee0, 0xc0302a, 0xd8c098, 0, 0x101010), pat: [3, 9, 0.28], size: [0.14, 0.22], beh: { n: [1, 4] } });
+S.seaLion.beh = { ...S.seaLion.beh, corkscrew: true };
+S.greatWhite.interest = 0.85;
+S.siphonophore.interest = 0.6;
+
+// Day / night activity: diurnal reef fish thin out and shelter near the bottom after dark; nocturnal
+// species only come out at night (see the director's per-biome night lists).
+export const DIEL = {
+  chromis: 'day', anthias: 'day', purpleAnthias: 'day', bluetang: 'day', yellowtang: 'day', clownfish: 'day', butterfly: 'day',
+  copperband: 'day', moorish: 'day', emperorAngel: 'day', queenAngel: 'day', parrotfish: 'day', sergeant: 'day', picasso: 'day',
+  boxfish: 'day', garibaldi: 'day', senorita: 'day', blacksmith: 'day', bannerfish: 'day', cleanerWrasse: 'day', napoleon: 'day',
+  filefish: 'day', sheephead: 'day', archerfish: 'day', grunt: 'day', juvSnapper: 'day', rainbowRunner: 'day',
+  whitetipNight: 'night', morayNight: 'night', spinyLobster: 'night', reefCrab: 'night', soldierfish: 'night',
+};
+
+// How much the documentary camera wants to watch an animal of this species (0..1).
+export function interestOf(sp) {
+  if (sp.interest != null) return sp.interest;
+  const sz = (sp.size[0] + sp.size[1]) * 0.5, m = sp.mot.mode, pl = sp.plan;
+  if (sz >= 6) return 1;
+  if (sp.hl) return 0.75;
+  if (m === 1 || m === 2 || m === 3 || pl === 'octopus' || pl === 'squid' || pl === 'dumbo' || (sp.scars === 0.9 && sz > 0.5)) return 0.7;
+  if (pl === 'jelly') return sz > 0.6 ? 0.55 : 0.35;
+  if (pl === 'crab' || pl === 'lobster' || pl === 'isopod' || pl === 'seapig' || pl === 'cassiopea') return 0.45;
+  return Math.min(0.5, 0.2 + sz * 0.15);
+}
+
 // ---------- procedural species ----------
 const hsv = (h, s, v) => {
   h = ((h % 1) + 1) % 1;
@@ -960,7 +1157,7 @@ const PROC_PAT = [0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 8, 12, 15, 21, 22, 23, 26];
 export function proceduralFish(kind, seed) {
   const r = mulberry32(seed * 7919 + 13);
   const deep = r.range(0.2, 0.62);
-  const reef = kind === 'reef', temperate = kind === 'kelp' || kind === 'polar', abyss = kind === 'abyss' || kind === 'vents';
+  const reef = kind === 'reef' || kind === 'softcoral' || kind === 'wall', temperate = kind === 'kelp' || kind === 'polar', abyss = kind === 'abyss' || kind === 'vents' || kind === 'deepplain';
   const hue = r(), sat = reef ? r.range(0.55, 1) : temperate ? r.range(0.12, 0.45) : abyss ? r.range(0.1, 0.4) : r.range(0.3, 0.8);
   const val = abyss ? r.range(0.08, 0.25) : r.range(0.45, 0.95);
   const d = hsv(hue, sat, val * r.range(0.7, 1)), b = hsv(hue + r.range(-0.05, 0.05), sat * 0.6, Math.min(1, val + 0.25));
@@ -1039,6 +1236,134 @@ export const NAMES = {
   toothfish: 'Antarctic toothfish', arcticCod: 'Arctic cod', lionsMane: "Lion's mane jellyfish", flounder: 'Peacock flounder',
   guitarfish: 'Shovelnose guitarfish', lizardfish: 'Variegated lizardfish', goatfish: 'Yellowfin goatfish', nurseShark: 'Nurse shark',
   oceanicSquid: 'Humboldt squid', glowSquid: 'Bioluminescent squid', rainbowRunner: 'Rainbow runner',
+  purpleAnthias: 'Purple anthias', glassfish: 'Pygmy sweeper', bannerfish: 'Schooling bannerfish', cleanerWrasse: 'Bluestreak cleaner wrasse',
+  hammerheadSchool: 'Scalloped hammerhead', potatoGrouper: 'Potato grouper', hawksbill: 'Hawksbill turtle', turtleRest: 'Green sea turtle',
+  juvSnapper: 'Mangrove snapper', grunt: 'Bluestriped grunt', juvBarracuda: 'Great barracuda', cassiopea: 'Upside-down jellyfish',
+  lemonShark: 'Lemon shark', needlefish: 'Redfin needlefish', archerfish: 'Banded archerfish', saltwaterCroc: 'Saltwater crocodile',
+  tripodFish: 'Tripod fish', seaPig: 'Sea pig', dumbo: 'Dumbo octopus', hagfish: 'Pacific hagfish', giantIsopod: 'Giant isopod',
+  glassSquid: 'Glass squid', sleeperShark: 'Pacific sleeper shark', deepCrab: 'Deep-sea red crab', spinyLobster: 'Caribbean spiny lobster',
+  reefCrab: 'Spotted reef crab', soldierfish: 'Blotcheye soldierfish', whitetipNight: 'Whitetip reef shark', morayNight: 'Green moray',
+  remora: 'Live sharksucker',
+};
+
+// One-line fun facts, shown for the animal the camera is watching (`i` overlay).
+export const FACTS = {
+  clownfish: 'All clownfish hatch male; the largest in a group becomes the female.',
+  bluetang: 'Blue tangs hide a scalpel-sharp spine on each side of the tail.',
+  yellowtang: 'At night yellow tangs fade and show a pale stripe along the body.',
+  moorish: 'The Moorish idol is the only living member of its family, Zanclidae.',
+  emperorAngel: 'Juvenile emperor angelfish are dark blue with white rings, nothing like the adults.',
+  parrotfish: 'Bumphead parrotfish bite off coral and excrete it as fine white sand.',
+  lionfish: 'Lionfish spines carry a painful venom; in the Atlantic they are invasive.',
+  puffer: 'Pufferfish inflate by gulping water, and many carry deadly tetrodotoxin.',
+  boxfish: 'Stressed boxfish release a toxin from their skin.',
+  goliath: 'Atlantic goliath groupers can grow past 2 m and 300 kg.',
+  napoleon: 'Humphead wrasse are among the few fish that eat toxic crown-of-thorns starfish.',
+  barracuda: 'Great barracudas hunt by sight, ambushing prey in sudden bursts.',
+  jack: 'By day bigeye trevally mill in huge, slowly turning schools.',
+  reefShark: 'A threatened grey reef shark hunches and swims stiffly as a warning.',
+  whitetip: 'Whitetip reef sharks rest in caves by day and hunt in packs at night.',
+  whitetipNight: 'Whitetip reef sharks hunt in packs at night, probing crevices for fish.',
+  blacktip: 'Blacktip reef sharks patrol water so shallow their fins break the surface.',
+  eagleRay: 'Spotted eagle rays crush clams and snails with plate-like teeth.',
+  manta: 'Manta rays have the largest brain relative to body size of any fish.',
+  moray: 'Morays have a second set of jaws in the throat that drags prey down.',
+  morayNight: 'Morays leave their holes at night to hunt across the reef.',
+  gardenEel: 'Garden eels never fully leave their burrows; they pick plankton from the current.',
+  greenTurtle: 'Green sea turtles are named for the colour of their fat, not their shell.',
+  turtleRest: 'Resting sea turtles can stay underwater for hours between breaths.',
+  hawksbill: 'Hawksbill turtles feed mostly on sponges, many of them toxic to other animals.',
+  octopus: 'An octopus has three hearts and blue, copper-based blood.',
+  cuttlefish: 'Cuttlefish shift colour with millions of chromatophores, yet are thought to be colour-blind.',
+  reefSquid: 'Bigfin reef squid talk to each other with rippling skin patterns.',
+  whaleShark: 'The whale shark is the largest fish on Earth, and it eats plankton.',
+  sardine: 'Threatened sardines pack into bait balls to confuse their predators.',
+  yellowfin: 'Yellowfin tuna can sprint at more than 70 km/h.',
+  bluefin: 'Atlantic bluefin tuna keep their bodies warmer than the water around them.',
+  sailfish: 'Sailfish slash through bait balls with their bills and can flash colours while hunting.',
+  oceanicWhitetip: 'Oceanic whitetips roam the open ocean, often escorted by pilot fish.',
+  blueShark: 'Blue sharks migrate across whole ocean basins.',
+  greatWhite: 'Great white sharks keep their core warm, so they can hunt in cold water.',
+  hammerhead: 'Scalloped hammerheads school by the hundred by day and hunt alone at night.',
+  hammerheadSchool: 'Scalloped hammerheads school by the hundred by day and hunt alone at night.',
+  sandTiger: 'Sand tiger sharks gulp air at the surface to hover without effort.',
+  greenlandShark: 'Greenland sharks may live for centuries, longer than any other vertebrate.',
+  sleeperShark: 'Pacific sleeper sharks scavenge whale carcasses in near-freezing deep water.',
+  mola: 'The ocean sunfish is the heaviest bony fish, at over 2 tonnes.',
+  humpback: 'Humpbacks blow spiralling nets of bubbles to trap schools of fish.',
+  blueWhale: 'The blue whale is the largest animal known to have ever lived.',
+  spermWhale: 'Sperm whales dive deeper than 1,000 m to hunt squid.',
+  orca: 'Orca pods have their own dialects and hunting traditions.',
+  bottlenose: 'Bottlenose dolphins blow bubble rings and play with them.',
+  commonDolphin: 'Common dolphins can travel in superpods of thousands.',
+  pilotWhale: 'Pilot whales are not whales at all but large oceanic dolphins.',
+  beluga: 'Belugas are called sea canaries for their chirps and whistles.',
+  narwhal: "A narwhal's tusk is a spiralled tooth that can grow longer than 2.5 m.",
+  garibaldi: 'Male garibaldi tend a nest of red algae and guard it fiercely.',
+  sheephead: 'California sheephead start life female and later become male.',
+  giantSeaBass: 'Giant sea bass can live for more than 70 years.',
+  seaLion: 'Sea lions swim with their long front flippers; true seals paddle with their hind ones.',
+  harbourSeal: 'Harbour seals can nap underwater and surface to breathe without fully waking.',
+  leopardSeal: 'Leopard seals are top predators of the Antarctic, hunting penguins and other seals.',
+  weddellSeal: 'Weddell seals keep breathing holes open by grinding the ice with their teeth.',
+  moonJelly: 'Moon jellies have no brain, heart or bones.',
+  lionsMane: "The lion's mane is among the largest jellyfish; its tentacles can pass 30 m.",
+  seahorse: 'Male seahorses carry the eggs and give birth.',
+  manatee: 'Manatees are distant relatives of elephants.',
+  dugong: 'Dugongs are the only plant-eating mammals that live strictly in the sea.',
+  tarpon: 'Tarpon can gulp air at the surface with a modified swim bladder.',
+  anglerfish: 'The anglerfish lure glows with light made by bacteria living inside it.',
+  lanternfish: 'Lanternfish rise hundreds of metres toward the surface each night to feed.',
+  hatchetfish: 'Hatchetfish hide their silhouettes with belly lights that glow downward.',
+  viperfish: "Viperfish fangs are so long they don't fit inside the mouth.",
+  dragonfish: 'Black dragonfish larvae have eyes on long stalks.',
+  vampireSquid: 'Vampire squid can turn their webbed arms inside out like a cloak.',
+  giantSquid: 'Giant squid have the largest eyes in the animal kingdom, as big as dinner plates.',
+  atolla: 'Under attack, the Atolla jellyfish flashes a ring of blue light: a burglar alarm.',
+  combJelly: 'Comb jellies swim with rows of beating cilia that scatter light into rainbows.',
+  helmetJelly: 'The helmet jellyfish avoids light and rises only in darkness.',
+  siphonophore: 'A siphonophore is a colony of specialised individuals working as one animal.',
+  emperorPenguin: 'Emperor penguins can dive deeper than 500 m.',
+  adeliePenguin: 'Adélie penguins can leap out of the sea straight onto the ice.',
+  krill: 'Antarctic krill are among the most abundant animals on Earth by weight.',
+  icefish: 'Icefish have no red blood cells; their blood is clear.',
+  arcticCod: 'Arctic cod make antifreeze proteins to survive near-freezing water.',
+  toothfish: 'Antarctic toothfish carry antifreeze proteins in their blood.',
+  eelpout: 'Vent eelpouts live among the tubeworms of hydrothermal vents.',
+  rattail: 'Grenadiers are among the most common fish on the deep sea floor.',
+  chimaera: 'Ratfish are relatives of sharks whose lineage split off about 400 million years ago.',
+  mahi: 'Mahi-mahi flash blue, green and gold.',
+  oceanicSquid: 'Humboldt squid hunt in packs and flash red and white.',
+  southernRay: 'Southern stingrays bury themselves in sand with only their eyes showing.',
+  flounder: 'Flounders hatch with an eye on each side; one eye migrates as they grow.',
+  nurseShark: 'Nurse sharks suck prey out of crevices.',
+  leopardShark: 'Leopard sharks gather in warm, shallow lagoons in summer.',
+  sweetlips: 'Oriental sweetlips gather in shoals under reef overhangs by day.',
+  purpleAnthias: 'Anthias live in harems; if the male dies, a female changes sex to replace him.',
+  anthias: 'Anthias live in harems; if the male dies, a female changes sex to replace him.',
+  glassfish: 'Pygmy sweepers crowd caves by day and spread out at night to feed on plankton.',
+  bannerfish: 'Schooling bannerfish trail a long white dorsal filament like a pennant.',
+  cleanerWrasse: 'Big fish queue at cleaner-wrasse stations to have parasites picked off.',
+  potatoGrouper: 'Potato groupers grow to 2 m and are often curious about divers.',
+  juvSnapper: 'Mangrove roots shelter young snappers until they move out to the reef.',
+  grunt: 'Grunts make grunting sounds by grinding the teeth in their throat.',
+  juvBarracuda: 'Young barracudas hang motionless among mangrove roots, waiting in ambush.',
+  cassiopea: 'Upside-down jellyfish lie bell-down so their algae get sunlight.',
+  lemonShark: 'Lemon shark pups spend their first years in mangrove nurseries.',
+  needlefish: 'Needlefish can leap out of the water at speed.',
+  archerfish: 'Archerfish shoot insects off leaves with jets of water.',
+  saltwaterCroc: 'The saltwater crocodile is the largest living reptile.',
+  tripodFish: 'Tripod fish stand on stiff fin rays, facing the current to catch drifting food.',
+  seaPig: 'Sea pigs are sea cucumbers that walk on water-filled tube feet.',
+  dumbo: 'Dumbo octopuses live deeper than any other known octopus.',
+  hagfish: 'A hagfish can turn a bucket of water into slime in seconds.',
+  giantIsopod: 'Giant isopods can go years without eating.',
+  glassSquid: 'Glass squid are almost transparent, nearly invisible in the dark.',
+  deepCrab: 'Deep-sea red crabs gather at food falls on the dark sea floor.',
+  spinyLobster: 'Caribbean spiny lobsters migrate in single-file queues.',
+  reefCrab: 'Spotted reef crabs hide by day and forage across the reef at night.',
+  soldierfish: 'Soldierfish use their huge eyes to hunt plankton at night.',
+  remora: 'A remora hitches rides with a sucking disc that evolved from a dorsal fin.',
 };
 const FAMILIES = {
   reef: ['Wrasse', 'Damselfish', 'Butterflyfish', 'Snapper', 'Cardinalfish', 'Surgeonfish', 'Hawkfish', 'Grunt', 'Rabbitfish', 'Fusilier'],
@@ -1053,6 +1378,10 @@ const FAMILIES = {
   abyss: ['Bristlemouth', 'Hatchetfish', 'Lanternfish', 'Dragonfish'],
   polar: ['Notothen', 'Sculpin', 'Snailfish'],
   pelagic: ['Scad', 'Jack', 'Driftfish'],
+  softcoral: ['Anthias', 'Damselfish', 'Wrasse', 'Fairy basslet', 'Cardinalfish', 'Hawkfish', 'Butterflyfish'],
+  wall: ['Fusilier', 'Wrasse', 'Damselfish', 'Snapper', 'Triggerfish', 'Hawkfish'],
+  mangrove: ['Mojarra', 'Grunt', 'Snapper', 'Goby', 'Silverside'],
+  deepplain: ['Cusk-eel', 'Snailfish', 'Grenadier', 'Halosaur'],
 };
 export function commonName(sp) {
   const k = sp.key || '';

@@ -10,7 +10,7 @@
 </head>
 <body><div id="lab"></div>
 <script type="module">
-// Dev-only species gallery: ?page=N&cols=4&rows=3&sp=a,b,c&t=<anim time>&view=side|top|front
+// Dev-only species gallery: ?page=N&cols=4&rows=3&sp=a,b,c&t=<anim time>&view=side|top|front&lod=-1|0|1
 import * as THREE from 'three';
 import { U, makeNoiseTexture } from '../water.js';
 import { SPECIES, speciesOf } from './species.js';
@@ -40,9 +40,11 @@ const encs = [];
 const lab = document.getElementById('lab');
 keys.forEach((k, idx) => {
   const sp = speciesOf(k); if (!sp) return;
-  const e = new Encounter(sys, sp, { n: 1, s0: 0, l0: 0, seed: 1, variant: 7, latMax: 10 });
+  const e = new Encounter(sys, sp, { n: 1, s0: 0, l0: 0, seed: 1, variant: 7, latMax: 10, kind: sp.beh.kind === 'attach' ? 'solo' : undefined });
+  const lod = +(qs.get('lod') || 0);
+  if (lod) e.mesh.geometry = e._makeGeo(sys.cache.acquire(sp, lod));
   const cx = (idx % cols - (cols - 1) / 2) * cw, cy = -((idx / cols | 0) - (rows - 1) / 2) * ch - 10;
-  const upright = ['jelly', 'octopus', 'seahorse'].includes(sp.plan);
+  const upright = ['jelly', 'octopus', 'seahorse', 'dumbo', 'cassiopea'].includes(sp.plan);
   const ext = upright ? 0.9 : sp.plan === 'siphon' ? 1 : 1.0;
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
