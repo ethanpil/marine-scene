@@ -19,6 +19,7 @@ Then open http://localhost:8000.
 | Key | Action |
 | --- | --- |
 | `H` | toggle zone captions |
+| `I` | show names of creatures and objects on screen |
 | `F` | fullscreen |
 | `S` | stats (fps, draw calls, triangles, biome weights) |
 | `Space` | pause |
@@ -30,7 +31,7 @@ Then open http://localhost:8000.
 | Param | Meaning |
 | --- | --- |
 | `seed=<int>` | fixed world seed (default: random each load) |
-| `biome=<key>` | starting zone: `reef kelp seagrass pelagic cave wreck ruins vents tidepool abyss polar` |
+| `biome=<key>` | starting zone: `reef kelp seagrass sandflat pelagic cave wreck ruins vents tidepool abyss polar` |
 | `speed=<m/s>` | cruise speed (default 3.2) |
 | `quality=low\|high` | force a quality tier (default: chosen from the GPU) |
 | `captions=0` | hide zone captions |
