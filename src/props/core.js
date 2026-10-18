@@ -427,6 +427,7 @@ class FloorSampler {
     this.nx = 0; this.ny = 1; this.nz = 0;
   }
   node(i, j) {
+    if (i < 0 || j < 0 || i >= this.W || j >= NZG) return this.ctx.floorAt((this.k0 + i) * DXG, this.s0 + j * DZG); // same global lattice
     const o = j * this.W + i;
     let v = this.h[o];
     if (v !== v) { v = this.ctx.floorAt((this.k0 + i) * DXG, this.s0 + j * DZG); this.h[o] = v; }
@@ -436,11 +437,6 @@ class FloorSampler {
   at(x, s) {
     const u = x / DXG - this.k0, v = (s - this.s0) / DZG;
     const i = Math.floor(u), j = Math.floor(v);
-    if (i < 0 || j < 0 || i >= this.W - 1 || j >= NZG - 1) {
-      const h = this.ctx.floorAt(x, s), n = this.ctx.floorNormal(x, s);
-      this.nx = n.x; this.ny = n.y; this.nz = n.z;
-      return h;
-    }
     const fu = u - i, fv = v - j;
     const ha = this.node(i, j), hb = this.node(i + 1, j), hc = this.node(i, j + 1), hd = this.node(i + 1, j + 1);
     let h, gx, gs;
@@ -591,6 +587,10 @@ export function named(t, name) { for (const x of Array.isArray(t) ? t : [t]) x.l
 export function soft(t) { for (const x of Array.isArray(t) ? t : [t]) x.solid = false; return t; }
 const MAX_OBS = 400, MAX_LABELS = 150;
 function register(ctx, batches) {
+  if (typeof window !== 'undefined' && window.__propsGapCheck) { // debug: keep ground items for gap measurement
+    const L = window.__propsItems || (window.__propsItems = []);
+    for (const b of batches) if (b && b.items) for (const it of b.items) if (it.g) L.push({ it, s0: ctx.s0, group: ctx.group });
+  }
   if (!ctx.addObstacle && !ctx.addLabel) return;
   const obs = [], labels = [];
   for (const b of batches) {
