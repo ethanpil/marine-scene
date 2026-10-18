@@ -1,8 +1,8 @@
 // Tide pools: rocks crusted with coralline algae, green / pink anemones, ochre & purple sea stars,
 // purple urchins, mussel & barnacle clusters, turban snails, sea lettuce, surfgrass and pink tufts.
-import { Batch, T, TAU, floorSampler, presence, sstep, budgetK } from './core.js';
+import { Batch, T, TAU, floorSampler, presence, sstep, budgetK, bendSpots } from './core.js';
 import { anemone, seastar, urchin, musselBed, barnacles, snail, seaLettuce, tuft, grassPatch, rock } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
 import { noise2 } from '../noise.js';
 
@@ -37,6 +37,8 @@ function specs() {
     tuft: { tpl: T.tpTuft, scale: [0.8, 1.6], follow: 0.7, tint: tintFrom([[0.85, 0.4, 0.5], [0.75, 0.35, 0.55], [0.9, 0.55, 0.6]]) },
     surf: { tpl: T.tpSurf, scale: [0.8, 1.3], follow: 0.8, sway: true, tint: tintFrom([[1, 1, 1]], 0.15) },
   });
+  S.pebbles = { tpl: T.pebbles, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[0.6, 0.55, 0.52], [0.5, 0.45, 0.45]], 0.1) };
+  S.micro = [{ w: 3, spec: S.pebbles }, { w: 1.5, spec: S.barnacle }, { w: 1.2, spec: S.snail }];
   S.list = [
     { w: 1.2, k: 'rock' }, { w: 2.6, k: 'anemG', sway: true }, { w: 1.5, k: 'anemP', sway: true }, { w: 1.6, k: 'star' }, { w: 1.6, k: 'urchin' },
     { w: 1.6, k: 'mussel' }, { w: 1.4, k: 'barnacle' }, { w: 1.2, k: 'snail' }, { w: 1.6, k: 'lettuce', sway: true }, { w: 1.6, k: 'tuft' }, { w: 1.6, k: 'surf', sway: true },
@@ -70,19 +72,21 @@ export function layoutTidepool(ctx) {
   const st = new Batch(MAT.static, 80000 * budgetK(ctx, 'tidepool')), sw = new Batch(MAT.sway, 50000 * budgetK(ctx, 'tidepool'));
   const spots = [];
   for (let k = 0; k < 22; k++) {
-    const p = spot(ctx, rng, 3.5, 18, 1.0);
+    const p = spot(ctx, rng, 0, 18, 1.0);
     if (rng() > ctx.weightOf(p.s, 'tidepool')) continue;
     spots.push(p);
   }
   spots.sort((a, b) => a.d - b.d);
   for (const p of spots) outcrop(ctx, fs, st, sw, rng, p.x, p.s, 0.6 + rng() * 0.7);
   for (let k = 0; k < 160; k++) {
-    const p = spot(ctx, rng, 3, 20, 1.1);
+    const p = spot(ctx, rng, 0, 20, 1.1);
     const w = ctx.weightOf(p.s, 'tidepool') * (0.65 + 0.35 * noise2(p.x / 5, p.s / 5, 811));
     if (rng() > w) continue;
     const e = pickW(rng, sp.list);
     putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 1.1);
   }
+  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'tidepool') * 0.8) outcrop(ctx, fs, st, sw, rng, bendX(ctx, b, 2.4, rng, 1.0), b.s, 1.1);
+  microDetail(ctx, fs, st, rng, 'tidepool', sp.micro, 90, 18);
   st.split = 3; sw.split = 2;
   return { batches: [st, sw] };
 }

@@ -1,8 +1,8 @@
 // Giant kelp forest: stipes rise from holdfasts to the surface, carrying blades on gas bladders,
 // and spread into a floating canopy. Sway (style 1) grows with height so bases stay anchored.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, floorSampler, presence, tubeClear, orient, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, floorSampler, presence, tubeClear, orient, budgetK, bendSpots, LENS } from './core.js';
 import { grassPatch } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -109,8 +109,13 @@ function specs() {
     star: { tpl: T.star, scale: [0.1, 0.2], follow: 0.95, sink: 0, tint: tintFrom([[0.85, 0.3, 0.06], [0.5, 0.2, 0.55], [0.75, 0.12, 0.1]]) },
     anem: { tpl: T.anem, scale: [0.6, 1.1], follow: 0.7, sway: true, tint: tintFrom([[0.9, 0.45, 0.45], [0.6, 0.7, 0.55], [0.85, 0.75, 0.6]]) },
     sponge: { tpl: T.tubeSp, scale: [0.5, 1.0], follow: 0.5, tint: tintFrom([[0.7, 0.45, 0.15], [0.55, 0.25, 0.4]]) },
+    bendRock: { tpl: [...T.mound, ...T.pinnacle], scale: [1.4, 2.2], follow: 0.2, sink: 0.25, tint: tintFrom([[0.42, 0.38, 0.34], [0.38, 0.36, 0.33]]) },
+    pebbles: { tpl: T.pebbles, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[0.6, 0.58, 0.55], [0.55, 0.5, 0.45]], 0.1) },
+    algae: { tpl: T.algae, scale: [0.6, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[0.9, 0.45, 0.5], [0.7, 0.55, 0.3], [0.55, 0.6, 0.3]], 0.12) },
+    lump: { tpl: T.spongeLump, scale: [0.8, 1.6], follow: 0.7, tint: tintFrom([[0.85, 0.55, 0.2], [0.8, 0.3, 0.3], [0.7, 0.65, 0.4]]) },
     under: { tpl: T.understory, scale: [0.8, 1.6], follow: 0.6, sway: true, tint: tintFrom([[1, 1, 1]], 0.2) },
   });
+  S.micro = [{ w: 3, spec: S.pebbles }, { w: 2.2, spec: S.algae }, { w: 1.4, spec: S.lump }];
   S.floorList = [
     { w: 3, k: 'rock' }, { w: 2.5, k: 'under', sway: true }, { w: 1.5, k: 'urchin' }, { w: 1, k: 'star' },
     { w: 0.8, k: 'anem', sway: true }, { w: 0.6, k: 'sponge' }, { w: 0.5, k: 'boulder' },
@@ -122,10 +127,10 @@ export function layoutKelp(ctx) {
   if (presence(ctx, 'kelp') <= 0) return null;
   const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
   const bk = budgetK(ctx, 'kelp');
-  const kb = new Batch(MAT.sway, 120000 * bk), st = new Batch(MAT.static, 20000 * bk), sw = new Batch(MAT.sway, 10000 * bk);
+  const kb = new Batch(MAT.sway, 120000 * bk), st = new Batch(MAT.static, 40000 * bk), sw = new Batch(MAT.sway, 12000 * bk);
   const plants = [];
   for (let k = 0; k < 130; k++) {
-    const p = spot(ctx, rng, 5.0, 45, 1.5);
+    const p = spot(ctx, rng, 0, 45, 1.3);
     const grove = 0.5 + 0.5 * noise2(p.x / 26, p.s / 26, 301);
     if (rng() > ctx.weightOf(p.s, 'kelp') * (0.45 + 0.75 * grove)) continue;
     plants.push(p);
@@ -140,14 +145,22 @@ export function layoutKelp(ctx) {
     const tpl = rng.pick((lod ? T.kelpLo : T.kelp)[ci]), sy = H / tpl.maxY;
     if (sy < 0.6 || sy > 1.6) continue;
     const sx = 0.9 + rng() * 0.3;
-    if (!tubeClear(ctx, p.x, p.s, y, y + H * 0.85, tpl.rLow * sx + 0.3) || !tubeClear(ctx, p.x, p.s, y + H * 0.85, y + H + 0.5, 6)) continue;
+    // kelp is soft: the camera may fly through the forest, only the lens radius stays clear
+    if (!tubeClear(ctx, p.x, p.s, y, y + H + 0.5, tpl.rLow * sx + 0.2, 0.1, LENS)) continue;
     const R = orient(0, 1, 0, 0, rng() * TAU);
     const c = 0.85 + rng() * 0.3;
     kb.add(tpl, p.x, y - 0.05, -(p.s - ctx.s0), R, sx, sy, sx, c, c * (0.95 + rng() * 0.1), c * (0.85 + rng() * 0.2), 1);
     if (!lod && rng() < 0.4) putFloor(ctx, fs, st, sp.rock, p.x + (rng() - 0.5) * 2, p.s + (rng() - 0.5) * 2, rng, 0.6);
   }
+  // boulders on the outside of bends, ringed by holdfasts
+  for (const b of bendSpots(ctx)) {
+    if (rng() > ctx.weightOf(b.s, 'kelp') * 0.8) continue;
+    const x = putBend(ctx, fs, st, sp.bendRock, b, rng);
+    if (x !== null) for (let j = 0; j < 4; j++) putFloor(ctx, fs, st, sp.rock, x + (rng() - 0.5) * 6, b.s + (rng() - 0.5) * 6, rng, 0.7);
+  }
+  microDetail(ctx, fs, st, rng, 'kelp', sp.micro, 150, 28);
   for (let k = 0; k < 150; k++) {
-    const p = spot(ctx, rng, 3.5, 36, 1.3);
+    const p = spot(ctx, rng, 0, 36, 1.3);
     if (rng() > ctx.weightOf(p.s, 'kelp')) continue;
     const e = pickW(rng, sp.floorList);
     putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 0.8 + sstep(4, 30, p.d) * 0.6);

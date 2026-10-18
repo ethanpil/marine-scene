@@ -1,8 +1,8 @@
 // Seagrass meadow: thousands of swaying blades as two instanced patch LODs (near / far), sandy gaps
 // from noise, plus shells, sea cucumbers, scallops, sand dollars, cushion stars and rocks.
-import { Builder, Batch, Inst, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, orient, budgetK } from './core.js';
+import { Builder, Batch, Inst, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, orient, budgetK, bendSpots } from './core.js';
 import { grassPatch, seastar } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -61,7 +61,7 @@ function sandDollar(seed) {
 }
 
 export function initSeagrass() {
-  T.grassNear = grassPatch(501, { n: 18, r: 0.55, h: 0.72, w: 0.042, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] });
+  T.grassNear = grassPatch(501, { n: 16, r: 0.55, h: 0.72, w: 0.042, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] });
   T.grassFar = grassPatch(502, { n: 14, r: 0.95, h: 0.75, w: 0.06, segs: 2, sway: 0.2, base: [0.08, 0.16, 0.05], mid: [0.25, 0.5, 0.12], tipc: [0.5, 0.5, 0.2] });
   T.conch = [conch(1)];
   T.cucumber = [cucumber(1), cucumber(2)];
@@ -81,6 +81,12 @@ function specs() {
     dollar: { tpl: T.sandDollar, scale: [0.07, 0.1], follow: 1, sink: 0.3, tint: tintFrom([[0.9, 0.85, 0.75]]) },
     cushion: { tpl: T.cushion, scale: [0.18, 0.26], follow: 0.95, sink: 0, tint: tintFrom([[0.9, 0.35, 0.08], [0.85, 0.6, 0.15], [0.7, 0.2, 0.12]]) },
   });
+  Object.assign(S, {
+    bendRock: { tpl: [...T.pinnacle, ...T.mound], scale: [1.1, 1.8], follow: 0.2, sink: 0.25, tint: tintFrom([[0.55, 0.52, 0.46]]) },
+    grit: { tpl: T.grit, scale: [0.8, 1.6], follow: 1, sink: 0.01, tint: tintFrom([[1, 0.96, 0.9]], 0.06) },
+    algae: { tpl: T.algae, scale: [0.6, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[0.7, 0.8, 0.5], [0.8, 0.7, 0.45]], 0.1) },
+  });
+  S.micro = [{ w: 2, spec: S.grit }, { w: 1.5, spec: S.algae }];
   S.list = [
     { w: 2, k: 'rock' }, { w: 1.2, k: 'conch' }, { w: 1.6, k: 'cucumber' }, { w: 1.2, k: 'scallop' }, { w: 1.4, k: 'dollar' }, { w: 1.1, k: 'cushion' },
   ];
@@ -106,7 +112,7 @@ function grassField(ctx, fs, inst, rng, d0, d1, step, hgt, minRest) {
         const y = fs.at(x, ss);
         // keep clear of the flight tube: patch height ~hgt
         const dx = Math.abs(x - px) - 0.6, dy = py - (y + hgt);
-        if (dx < 3.85 && dx * dx + Math.max(0, dy) * Math.max(0, dy) < 3.85 * 3.85) continue;
+        if (dx < 0 && dy < 0.75) continue; // keep the lens radius clear (only matters in shallow cross-fades)
         const sc = (0.7 + 0.5 * dens) * (0.85 + rng() * 0.3);
         const R = orient(fs.nx, fs.ny, fs.nz, 0.8, rng() * TAU);
         const g = 0.85 + rng() * 0.3, yel = rng() * 0.15;
@@ -120,23 +126,25 @@ function grassField(ctx, fs, inst, rng, d0, d1, step, hgt, minRest) {
 export function layoutGrassNear(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
   const fs = floorSampler(ctx), rng = ctx.rng;
-  const inst = new Inst(T.grassNear, MAT.sway, Math.round(1400 * budgetK(ctx, 'seagrass')));
-  grassField(ctx, fs, inst, rng, 2.5, 14, 1.0, 0.75);
+  const inst = new Inst(T.grassNear, MAT.sway, Math.round(1550 * budgetK(ctx, 'seagrass')));
+  grassField(ctx, fs, inst, rng, 0, 14, 1.0, 0.75);
   return { extra: [inst], batches: [] };
 }
 export function layoutGrassFar(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
   const fs = floorSampler(ctx), rng = ctx.rng;
-  const inst = new Inst(T.grassFar, MAT.sway, Math.round(780 * budgetK(ctx, 'seagrass')));
+  const inst = new Inst(T.grassFar, MAT.sway, Math.round(600 * budgetK(ctx, 'seagrass')));
   grassField(ctx, fs, inst, rng, 14, 40, 1.8, 0.8);
   return { extra: [inst], batches: [] };
 }
 export function layoutSeagrassMisc(ctx) {
   if (presence(ctx, 'seagrass') <= 0) return null;
   const sp = specs(), fs = floorSampler(ctx), rng = ctx.rng;
-  const st = new Batch(MAT.static, 16000 * budgetK(ctx, 'seagrass'));
+  const st = new Batch(MAT.static, 22000 * budgetK(ctx, 'seagrass'));
+  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'seagrass') * 0.7) putBend(ctx, fs, st, sp.bendRock, b, rng);
+  microDetail(ctx, fs, st, rng, 'seagrass', sp.micro, 70, 26);
   for (let k = 0; k < 110; k++) {
-    const p = spot(ctx, rng, 3, 30, 1.2);
+    const p = spot(ctx, rng, 0, 30, 1.2);
     if (rng() > ctx.weightOf(p.s, 'seagrass')) continue;
     const e = pickW(rng, sp.list);
     putFloor(ctx, fs, st, sp[e.k], p.x, p.s, rng);

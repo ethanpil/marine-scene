@@ -1,9 +1,9 @@
 // Hydrothermal vents: black-smoker chimneys (glowing mineral bases, sulphide streaks) with billowing
 // smoke plumes, tube-worm thickets, mussel beds and bacterial mats. Vent fields are seeded per segment;
 // each chunk instantiates the field members whose centre lies inside it.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, tubeClear, orient, rotY, budgetK, bendSpots } from './core.js';
 import { musselBed, rockInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, bendX, microDetail } from './scatter.js';
 import { MAT, billboardMesh } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -103,6 +103,8 @@ function specs() {
     mussels: { tpl: T.ventMussels, scale: [0.8, 1.6], follow: 0.9, sink: 0.04, tint: tintFrom([[1, 1, 1]], 0.15) },
     mat: { tpl: T.mat, scale: [0.6, 2.2], follow: 1, sink: 0.0, maxSlope: 0.85, tint: tintFrom([[0.9, 0.9, 0.85], [0.85, 0.75, 0.35], [0.85, 0.5, 0.25]], 0.1) },
   });
+  S.pebbles = { tpl: T.pebbles, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[0.25, 0.22, 0.2], [0.4, 0.25, 0.15]], 0.1) };
+  S.micro = [{ w: 3, spec: S.pebbles }, { w: 1.2, spec: S.mat }, { w: 1.4, spec: S.mussels }];
   S.around = [{ w: 3, k: 'worms', sway: true }, { w: 2, k: 'mussels' }, { w: 2, k: 'mat' }, { w: 1.2, k: 'rock' }];
   return S;
 }
@@ -136,10 +138,18 @@ export function layoutVents(ctx) {
   const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
   const st = new Batch(MAT.static, 75000 * budgetK(ctx, 'vents')), sw = new Batch(MAT.sway, 45000 * budgetK(ctx, 'vents'));
   const plumes = [], halos = [];
+  const members = [];
   for (const seg of ctx.segments) {
     if (seg.key !== 'vents') continue;
-    for (const m of segmentFields(ctx, seg).members) {
-      if (m.s < ctx.s0 || m.s >= ctx.s1) continue;
+    for (const m of segmentFields(ctx, seg).members) if (m.s >= ctx.s0 && m.s < ctx.s1) members.push(m);
+  }
+  // chimneys on the outside of bends: the camera curves past the smoking stack
+  for (const b of bendSpots(ctx)) {
+    if (rng() > ctx.weightOf(b.s, 'vents') * 0.8) continue;
+    members.push({ kind: 'chimney', x: bendX(ctx, b, 2.6, rng, 1.2), s: b.s, seed: (b.s * 7919) | 0 });
+  }
+  {
+    for (const m of members) {
       const r2 = mulberry32(m.seed);
       if (m.kind === 'chimney') {
         const tpl = r2.pick(T.chimney), sc = 0.75 + r2() * 0.5;
@@ -164,6 +174,7 @@ export function layoutVents(ctx) {
       }
     }
   }
+  microDetail(ctx, fs, st, rng, 'vents', sp.micro, 110, 28);
   // sparse rocks and the odd mat elsewhere
   for (let k = 0; k < 50; k++) {
     const p = spot(ctx, rng, 0, 40, 1);

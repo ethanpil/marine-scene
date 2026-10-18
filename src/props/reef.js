@@ -1,7 +1,7 @@
 // Coral reef: bommies (coral heads) built around a massive coral / rock core, plus scattered life.
-import { Builder, Batch, T, TAU, fbm3, vn3, sat, sstep, lerp, floorSampler, presence, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, fbm3, vn3, sat, sstep, lerp, floorSampler, presence, budgetK, bendSpots } from './core.js';
 import { rockInto, branchesInto, seaFan, tubeSponges, softCoral, leatherCoral, anemone, seaWhips, seastar, urchin } from './shapes.js';
-import { putAt, putFloor, pickW, tintFrom, spot } from './scatter.js';
+import { putAt, putFloor, pickW, tintFrom, spot, bendX, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise2 } from '../noise.js';
 
@@ -13,7 +13,7 @@ function staghorn(seed) {
     branchesInto(b, rng, {
       depth: 3, len: 0.32, rad: 0.06, radial: 4, segs: 2, kids: [1, 2], spread: 0.55, up: 0.14, wiggle: 0.3,
       lenK: 0.85, radK: 0.8, tipK: 0.55, childAt: [0.5, 1],
-      paint(level, v, x, y, z, o) { const t = sat(y / 0.9); o[3] = o[4] = o[5] = 0.45 + 0.6 * t + (level === 3 ? 0.3 * v : 0); },
+      paint(level, v, x, y, z, o) { const t = sat(y / 0.9); o[3] = o[4] = o[5] = 0.45 + 0.6 * t + (level === 3 ? 0.3 * v : 0); o[7] = 2; },
     }, [Math.cos(a) * r, 0, Math.sin(a) * r], [Math.cos(a) * 0.5, 1, Math.sin(a) * 0.5]);
   }
   return b.build();
@@ -143,6 +143,13 @@ function specs() {
     { w: 2.4, k: 'soft', sway: true }, { w: 0.9, k: 'leather', sway: true }, { w: 1.4, k: 'tubeSp' }, { w: 1.1, k: 'barrel' },
     { w: 0.9, k: 'anem', sway: true }, { w: 0.9, k: 'whip', sway: true }, { w: 0.6, k: 'boulder' },
   ];
+  Object.assign(REEF, {
+    rubble: { tpl: T.rubble, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[1, 0.95, 0.88], [0.9, 0.85, 0.82], [0.95, 0.8, 0.85]], 0.1) },
+    grit: { tpl: T.grit, scale: [0.8, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[1, 0.96, 0.9]], 0.06) },
+    algae: { tpl: T.algae, scale: [0.6, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[0.75, 0.85, 0.6], [1.0, 0.7, 0.75], [0.8, 0.7, 0.5]], 0.12) },
+    lump: { tpl: T.spongeLump, scale: [0.7, 1.6], follow: 0.7, tint: tintFrom(VIVID) },
+  });
+  REEF.micro = [{ w: 3, spec: REEF.rubble }, { w: 2, spec: REEF.grit }, { w: 1.6, spec: REEF.algae }, { w: 1.6, spec: REEF.lump }];
   REEF.smallList = [
     { w: 2, k: 'star' }, { w: 2, k: 'urchin' }, { w: 1.4, k: 'clam' }, { w: 1.6, k: 'anem', sway: true }, { w: 1.4, k: 'brain' }, { w: 0.8, k: 'soft', sway: true },
   ];
@@ -173,6 +180,7 @@ export function bommie(ctx, fs, st, sw, rng, x, s, moundK, n, coralK, list) {
 
 // Coral banks line both sides of a sandy valley: rows of coral heads, densest near the path.
 const ROWS = [
+  { d: [0, 5.0], step: 3.6, m: 0.45, n: 3, k: 0.85 },
   { d: [5.0, 8.5], step: 4.4, m: 0.65, n: 7, k: 1.0 },
   { d: [8.5, 15], step: 5.0, m: 0.85, n: 6, k: 1.05 },
   { d: [15, 25], step: 6.5, m: 1.05, n: 4, k: 1.1 },
@@ -192,9 +200,15 @@ export function layoutReef(ctx) {
       }
     }
   }
-  // the sand channel under the camera: scattered small life
-  for (let k = 0; k < 60; k++) {
-    const p = spot(ctx, rng, 0, 6, 1);
+  // coral heads on the outside of bends: seen dead ahead, the camera curves past
+  for (const b of bendSpots(ctx)) {
+    if (rng() > ctx.weightOf(b.s, 'reef') * 0.85) continue;
+    bommie(ctx, fs, st, sw, rng, bendX(ctx, b, T.coralMound[0].r * 2.4, rng, 1.2), b.s, 1.25, 10, 1.1, null);
+  }
+  microDetail(ctx, fs, st, rng, 'reef', R.micro, 130, 26);
+  // small life everywhere, also under the camera
+  for (let k = 0; k < 90; k++) {
+    const p = spot(ctx, rng, 0, 14, 1);
     if (rng() > ctx.weightOf(p.s, 'reef') * 0.8) continue;
     const e = pickW(rng, R.smallList);
     putFloor(ctx, fs, e.sway ? sw : st, R[e.k], p.x, p.s, rng, 0.8);

@@ -1,5 +1,5 @@
 // Placement helpers shared by the biome populators.
-import { orient, tubeClear, TAU } from './core.js';
+import { orient, propClear, TAU } from './core.js';
 
 export function pickW(rng, list) {
   let tot = 0;
@@ -23,7 +23,7 @@ export function putAt(ctx, batch, spec, x, y, s, nx, ny, nz, rng, sizeK = 1) {
   let ok = false;
   for (let t = 0; t < 4; t++) {
     const h = tpl.maxY * sc * ys;
-    if (y + h < top && tubeClear(ctx, x, s, y, y + h, tpl.r * sc)) { ok = true; break; }
+    if (y + h < top && propClear(ctx, x, s, y, y + h, tpl.r * sc, spec.sway || spec.soft)) { ok = true; break; }
     sc *= 0.65;
     if (sc < minSc) break;
   }
@@ -57,3 +57,27 @@ export function tintFrom(list, amt = 0.15) {
   };
 }
 export const grey = (c, amt = 0.15) => tintFrom([c], amt);
+
+// Solid obstacle on the outside of a bend apex (b from bendSpots): reads dead ahead, camera curves past.
+import { TUBE } from './core.js';
+export function bendX(ctx, b, radius, rng, extra = 1.6) {
+  return ctx.pathX(b.s) + b.side * (TUBE + 0.45 + radius + rng() * extra);
+}
+export function putBend(ctx, fs, batch, spec, b, rng) {
+  const tpl = Array.isArray(spec.tpl) ? spec.tpl[(rng() * spec.tpl.length) | 0] : spec.tpl;
+  const sc = spec.scale[0] + (spec.scale[1] - spec.scale[0]) * rng();
+  const x = bendX(ctx, b, tpl.r * sc, rng);
+  const y = fs.at(x, b.s);
+  return putAt(ctx, batch, { ...spec, tpl, scale: [sc, sc], tilt: 0, follow: Math.min(spec.follow ?? 0.3, 0.25) }, x, y, b.s, fs.nx, fs.ny, fs.nz, rng) ? x : null;
+}
+
+// Dense low micro detail across the floor, including directly under the path.
+// list: [{ w, spec }] ; n attempts; d1 lateral range
+export function microDetail(ctx, fs, batch, rng, key, list, n, d1 = 30) {
+  for (let k = 0; k < n; k++) {
+    const p = spot(ctx, rng, 0, d1, 1.25);
+    if (rng() > ctx.weightOf(p.s, key)) continue;
+    const e = pickW(rng, list);
+    putFloor(ctx, fs, batch, e.spec, p.x, p.s, rng);
+  }
+}

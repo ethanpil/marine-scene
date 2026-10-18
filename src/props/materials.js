@@ -76,7 +76,13 @@ vec4 pB = pTri(vWPos, pW, 1.0);
 float pH = pA.r * 0.5 + pB.g * 0.5;
 float pBumpK = 0.035;
 float pMode = vFx.y;
-diffuseColor.rgb *= 0.74 + 0.52 * (pA.g * 0.55 + pB.r * 0.45);
+diffuseColor.rgb *= 0.7 + 0.6 * (pA.g * 0.55 + pB.r * 0.45);
+diffuseColor.rgb *= 1.0 + (pA.rgb - 0.5) * vec3(0.32, 0.22, 0.28);   // natural hue mottling
+{
+  float pL = dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15));
+  float pD = smoothstep(10.0, 38.0, length(vWPos - cameraPosition));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(pL), pD * 0.4);        // distant colour washes out
+}
 `;
 
 const COLOR_STATIC = COLOR_COMMON + /* glsl */`

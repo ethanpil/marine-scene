@@ -2,9 +2,9 @@
 // decks, broken masts / funnel / superstructure, portholes, rust & growth), optionally broken in two,
 // plus aircraft and submarine wrecks and debris fields. Set pieces are anchored per segment (seg.seed)
 // and built in the chunk that contains their largest s.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, rotX, rotY, rotZ, mul3, orient, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -337,6 +337,48 @@ function plank(seed, steel) {
   return b.build();
 }
 
+// piece of hull skin with ribs lying on the sand (wood or steel), low enough to sit under the path
+function hullFragment(seed, steel) {
+  const b = new Builder(), rng = mulberry32(seed), L = 3 + rng() * 2.5, W = 1.8 + rng() * 1.2;
+  const col = steel ? [0.42, 0.2, 0.12] : [0.4, 0.3, 0.2], f = [0.9, steel ? 4 : 0];
+  const hole = (u, v) => vn3(u * 4, v * 3, seed, seed) > 0.35 || (u > 0.85 && rng() < 0.5);
+  const v0 = b.vc;
+  const NU = 10, NV = 5;
+  for (let i = 0; i <= NU; i++) for (let j = 0; j <= NV; j++) {
+    const u = i / NU, v = j / NV, x = (v - 0.5) * W, z = (u - 0.5) * L;
+    const y = 0.35 * Math.cos((v - 0.5) * 2.4) - 0.2 + 0.08 * Math.sin(u * 5 + seed) + (steel ? 0 : 0.02 * Math.sin(v * 40));
+    const c = steel ? col : col.map((q) => q * (0.85 + 0.25 * Math.sin(v * 40)));
+    b.v(x, y, z, 0, 1, 0, c[0], c[1], c[2], f[0], f[1]);
+  }
+  const i0 = b.I.length;
+  for (let i = 0; i < NU; i++) for (let j = 0; j < NV; j++) {
+    if (hole((i + 0.5) / NU, (j + 0.5) / NV)) continue;
+    const a = v0 + i * (NV + 1) + j, bb = a + NV + 1;
+    b.t(a, a + 1, bb); b.t(bb, a + 1, bb + 1);
+  }
+  b.smooth(v0, i0);
+  const v1 = b.vc, i1 = b.I.length; // underside
+  for (let k = v0; k < v1; k++) b.v(b.P[k * 3], b.P[k * 3 + 1] - 0.06, b.P[k * 3 + 2], 0, -1, 0, 0.12, 0.09, 0.07, 0.2, f[1]);
+  for (let k = i0; k < i1; k += 3) b.t(b.I[k] - v0 + v1, b.I[k + 2] - v0 + v1, b.I[k + 1] - v0 + v1);
+  b.smooth(v1, i1);
+  for (let k = 0; k < 4; k++) {
+    const z = (k / 3 - 0.5) * L * 0.85, pts = [];
+    for (let j = 0; j <= 6; j++) { const v = j / 6; pts.push([(v - 0.5) * W * 1.05, 0.35 * Math.cos((v - 0.5) * 2.4) - 0.1 + (j === 6 ? 0.25 * rng() : 0), z]); }
+    b.tube(pts, pts.map(() => (steel ? 0.06 : 0.09)), 4, (v, an, x, y, z2, o) => { o[3] = col[0] * 0.7; o[4] = col[1] * 0.7; o[5] = col[2] * 0.7; o[6] = 0.8; o[7] = f[1]; });
+  }
+  return b.build();
+}
+
+// broken mast stump with a fallen yard, standing beside the path at bends
+function mastStump(seed) {
+  const b = new Builder(), rng = mulberry32(seed), H = 7 + rng() * 4;
+  addMast(b, [0, -0.5, 0], H, 0.32, [(rng() - 0.5) * 0.25, (rng() - 0.5) * 0.25], rng, false);
+  b.tube([[-2.6, H * 0.7, 0.3], [0, H * 0.72, 0.1], [2.2, H * 0.62, -0.2]], [0.13, 0.14, 0.12], 5, (v, a, x, y, z, o) => { o[3] = 0.28; o[4] = 0.21; o[5] = 0.13; o[6] = 0.85; }, { cap: true });
+  const v0 = b.vc; // rubble mound at the foot
+  for (let k = 0; k < 5; k++) b.box(0.3, 0.15, 1.6 + rng(), rotY(rng() * TAU), (rng() - 0.5) * 1.5, 0.08, (rng() - 0.5) * 1.5, [0.3, 0.22, 0.14], [0.9, 0]);
+  return b.build();
+}
+
 export function initWreck() {
   T.ship = {
     wood: [buildShip('wood', 11), buildShip('wood', 12)],
@@ -348,6 +390,7 @@ export function initWreck() {
   };
   T.debris = {
     barrel: [barrel(1, false)], drum: [barrel(2, true)], crate: [crate(1, false), crate(2, true)], cannon: [cannon(1)],
+    frag: [hullFragment(1, false), hullFragment(2, false)], fragSteel: [hullFragment(3, true), hullFragment(4, true)], mast: [mastStump(1), mastStump(2)],
     anchor: [anchor(1)], chain: [chain(1), chain(2)], plank: [plank(1, false), plank(2, false)], plate: [plank(3, true), plank(4, true)],
   };
 }
@@ -446,20 +489,26 @@ function specs() {
     chain: { tpl: D.chain, scale: [0.9, 1.3], follow: 0.9, sink: 0.3, tint: tintFrom([[1, 1, 1]]) },
     plank: { tpl: D.plank, scale: [0.8, 1.3], follow: 0.9, sink: 0.2, tint: tintFrom([[1, 1, 1]]) },
     plate: { tpl: D.plate, scale: [0.6, 1.4], follow: 0.7, tilt: 0.4, sink: 0.2, tint: tintFrom([[1, 1, 1]]) },
+    frag: { tpl: D.frag, scale: [0.8, 1.2], follow: 0.9, tilt: 0.15, sink: 0.12, tint: tintFrom([[1, 1, 1]]) },
+    fragSteel: { tpl: D.fragSteel, scale: [0.8, 1.2], follow: 0.9, tilt: 0.15, sink: 0.12, tint: tintFrom([[1, 1, 1]]) },
+    mast: { tpl: D.mast, scale: [0.9, 1.1], follow: 0.1, tint: tintFrom([[1, 1, 1]]) },
+    pebbles: { tpl: T.pebbles, scale: [0.8, 1.6], follow: 1, sink: 0.02, tint: tintFrom([[0.55, 0.45, 0.38], [0.45, 0.32, 0.25]], 0.1) },
+    algae: { tpl: T.algae, scale: [0.6, 1.4], follow: 1, sink: 0.01, tint: tintFrom([[0.55, 0.6, 0.4]], 0.1) },
     sponge: { tpl: T.tubeSp, scale: [0.4, 0.9], follow: 0.5, tint: tintFrom([[0.55, 0.35, 0.18], [0.45, 0.25, 0.35]]) },
     fan: { tpl: T.fan, scale: [0.5, 1.1], follow: 0.2, sway: true, tint: tintFrom([[0.5, 0.18, 0.5], [0.65, 0.3, 0.12]]) },
     anem: { tpl: T.anem, scale: [0.6, 1.0], follow: 0.7, sway: true, tint: tintFrom([[0.85, 0.85, 0.85]]) },
   });
-  S.wood = [{ w: 3, k: 'barrel' }, { w: 2, k: 'crate' }, { w: 1.6, k: 'cannon' }, { w: 0.4, k: 'anchor' }, { w: 0.6, k: 'chain' }, { w: 2.5, k: 'plank' }, { w: 1, k: 'rock' }, { w: 0.8, k: 'sponge' }, { w: 0.5, k: 'fan', sway: true }];
-  S.steel = [{ w: 2.5, k: 'drum' }, { w: 1.2, k: 'crate' }, { w: 0.4, k: 'anchor' }, { w: 1, k: 'chain' }, { w: 2.5, k: 'plate' }, { w: 1, k: 'rock' }, { w: 0.8, k: 'sponge' }, { w: 0.5, k: 'anem', sway: true }];
-  S.sparse = [{ w: 4, k: 'rock' }, { w: 1, k: 'plank' }, { w: 0.6, k: 'drum' }, { w: 0.5, k: 'barrel' }, { w: 0.6, k: 'plate' }, { w: 0.6, k: 'sponge' }, { w: 0.4, k: 'anem', sway: true }];
+  S.wood = [{ w: 2.5, k: 'frag' }, { w: 3, k: 'barrel' }, { w: 2, k: 'crate' }, { w: 1.6, k: 'cannon' }, { w: 0.4, k: 'anchor' }, { w: 0.6, k: 'chain' }, { w: 2.5, k: 'plank' }, { w: 1, k: 'rock' }, { w: 0.8, k: 'sponge' }, { w: 0.5, k: 'fan', sway: true }];
+  S.steel = [{ w: 2.5, k: 'fragSteel' }, { w: 2.5, k: 'drum' }, { w: 1.2, k: 'crate' }, { w: 0.4, k: 'anchor' }, { w: 1, k: 'chain' }, { w: 2.5, k: 'plate' }, { w: 1, k: 'rock' }, { w: 0.8, k: 'sponge' }, { w: 0.5, k: 'anem', sway: true }];
+  S.micro = [{ w: 2, spec: S.pebbles }, { w: 1.2, spec: S.algae }];
+  S.sparse = [{ w: 1.2, k: 'frag' }, { w: 0.8, k: 'fragSteel' }, { w: 4, k: 'rock' }, { w: 1, k: 'plank' }, { w: 0.6, k: 'drum' }, { w: 0.5, k: 'barrel' }, { w: 0.6, k: 'plate' }, { w: 0.6, k: 'sponge' }, { w: 0.4, k: 'anem', sway: true }];
   return S;
 }
 
 export function layoutWreck(ctx) {
   if (presence(ctx, 'wreck') <= 0) return null;
   const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
-  const ships = new Batch(MAT.static, 70000), st = new Batch(MAT.static, 40000 * budgetK(ctx, 'wreck')), sw = new Batch(MAT.sway, 10000 * budgetK(ctx, 'wreck'));
+  const ships = new Batch(MAT.static, 70000), st = new Batch(MAT.static, 60000 * budgetK(ctx, 'wreck')), sw = new Batch(MAT.sway, 10000 * budgetK(ctx, 'wreck'));
   const idx = Math.floor(ctx.s0 / 64);
   const near = [];
   for (const seg of ctx.segments) {
@@ -485,6 +534,8 @@ export function layoutWreck(ctx) {
     const e = pickW(rng, sp.sparse);
     putFloor(ctx, fs, e.sway ? sw : st, sp[e.k], p.x, p.s, rng, 1 + sstep(5, 30, p.d));
   }
-  ships.split = 2; st.split = 1; sw.split = 1;
+  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'wreck') * 0.5) putBend(ctx, fs, st, rng() < 0.6 ? sp.mast : sp.rock, b, rng);
+  microDetail(ctx, fs, st, rng, 'wreck', sp.micro, 90, 26);
+  ships.split = 2; st.split = 1; sw.split = 1; st.from = 1; sw.from = 1;
   return { batches: [ships, st, sw] };
 }

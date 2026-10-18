@@ -1,9 +1,9 @@
 // Cenote caves: speleothems hanging from / rising to the rock, columns where floor and ceiling meet,
 // breakdown boulders, drowned trees beneath the sky openings, and soft animated light shafts.
 import * as THREE from 'three';
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, pointsClear, placedPoints, orient, rotY, rotZ, mul3, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, floorSampler, presence, tubeClear, pointsClear, placedPoints, orient, rotY, rotZ, mul3, budgetK, bendSpots, TUBE } from './core.js';
 import { branchesInto, stoneInto } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, bendX, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -72,8 +72,11 @@ function specs() {
   if (S.rock) return S;
   Object.assign(S, {
     rock: { tpl: [...T.rocks, ...T.block], scale: [0.5, 2.2], follow: 0.6, tint: tintFrom([[0.62, 0.58, 0.5], [0.5, 0.48, 0.44]]) },
+    pebbles: { tpl: T.pebbles, scale: [0.8, 1.7], follow: 1, sink: 0.02, tint: tintFrom([[0.85, 0.8, 0.7], [0.75, 0.72, 0.66]], 0.08) },
+    grit: { tpl: T.rubble, scale: [0.8, 1.5], follow: 1, sink: 0.02, tint: tintFrom([[0.8, 0.77, 0.7]], 0.08) },
     mite: { tpl: T.stalagmite, scale: [0.6, 2.6], ys: [0.6, 1.4], follow: 0.15, tint: tintFrom([[1, 1, 1]]) },
   });
+  S.micro = [{ w: 2, spec: S.pebbles }, { w: 1.4, spec: S.grit }];
   return S;
 }
 
@@ -210,9 +213,19 @@ export function makeCaveLayout(env) {
       if (!tubeClear(ctx, p.x, p.s, f, c, 0.55 * sx)) continue;
       st.add(rng.pick(T.column), p.x, f - 0.3, -(p.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
     }
-    // stalagmites and breakdown boulders on the floor
+    // columns on the outside of bends: the camera swings around them
+    for (const b of bendSpots(ctx)) {
+      if (rng() > ctx.weightOf(b.s, 'cave') * 0.85) continue;
+      const sx = 0.9 + rng() * 0.9, x = bendX(ctx, b, 0.62 * sx, rng, 1.0);
+      const c = ctx.ceilingAt(x, b.s), f = fs.at(x, b.s), gap = c - f;
+      if (c > ctx.surfaceY - 0.4 || gap < 1.5 || gap > 14) continue;
+      if (!tubeClear(ctx, x, b.s, f, c, 0.62 * sx)) continue;
+      st.add(rng.pick(T.column), x, f - 0.3, -(b.s - ctx.s0), rotY(rng() * TAU), sx, gap + 0.6, sx, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 0.85 + rng() * 0.15, 1);
+    }
+    microDetail(ctx, fs, st, rng, 'cave', sp.micro, 110, 20);
+    // stalagmites and breakdown boulders on the floor (low ones also under the path)
     for (let k = 0; k < 170; k++) {
-      const p = spot(ctx, rng, 3, 24, 1);
+      const p = spot(ctx, rng, 0, 24, 1);
       if (rng() > ctx.weightOf(p.s, 'cave')) continue;
       const c = ctx.ceilingAt(p.x, p.s);
       const spec = c < ctx.surfaceY - 0.4 && rng() < 0.55 ? sp.mite : sp.rock;

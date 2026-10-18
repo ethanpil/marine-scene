@@ -419,8 +419,8 @@ class FloorSampler {
 
 // ---------- flight-tube clearance ----------
 // Object occupying x +- r horizontally, s +- r, heights [yLo, yHi]
-export function tubeClear(ctx, x, s, yLo, yHi, r = 0, margin = 0.35) {
-  const lim = TUBE + margin;
+export function tubeClear(ctx, x, s, yLo, yHi, r = 0, margin = 0.35, tube = TUBE) {
+  const lim = tube + margin;
   for (let k = -1; k <= 1; k++) {
     if (r === 0 && k !== 0) continue;
     const ss = s + k * r, px = ctx.pathX(ss), py = ctx.pathY(ss);
@@ -518,4 +518,31 @@ export function budgetK(ctx, key) {
   let w = 0;
   for (let k = 0; k <= 4; k++) w += ctx.weightOf(ctx.s0 + k * 16, key);
   return Math.max(0.15, Math.min(1, w / 5 + 0.05));
+}
+
+// ---------- clearance rules ----------
+// soft (swaying) props may fill the tube but keep LENS m clear of the exact camera line;
+// low solids may sit under the path while their top stays LOW_GAP below pathY;
+// tall solids keep the full TUBE.
+export const LENS = 0.6, LOW_GAP = 1.3;
+export function propClear(ctx, x, s, yLo, yHi, r, soft) {
+  if (soft) return tubeClear(ctx, x, s, yLo, yHi, r, 0.1, LENS);
+  let low = true;
+  for (let k = -1; k <= 1 && low; k++) if (yHi > ctx.pathY(s + k * r) - LOW_GAP) low = false;
+  return low || tubeClear(ctx, x, s, yLo, yHi, r);
+}
+
+// ---------- environment access (set by registerProps) ----------
+export const ENV = { shape: null };
+// Bend apexes inside the chunk: obstacles placed at side * d appear dead ahead on approach
+// (outside of the bend) and the camera curves around them.
+export function bendSpots(ctx, thr = 0.0045, step = 2) {
+  const sh = ENV.shape, out = [];
+  if (!sh || !sh.pathCurv) return out;
+  for (let s = Math.ceil(ctx.s0 / step) * step; s < ctx.s1; s += step) {
+    const c = sh.pathCurv(s), a = Math.abs(c);
+    if (a < thr || a < Math.abs(sh.pathCurv(s - step)) || a < Math.abs(sh.pathCurv(s + step))) continue;
+    out.push({ s, side: c > 0 ? -1 : 1, c });
+  }
+  return out;
 }

@@ -1,8 +1,8 @@
 // Polar sea ice: rubble keels and icebergs hanging from the ice ceiling, brinicles, and sparse benthos
 // on the far floor. Ice uses the static material's translucent ice mode (5).
-import { Builder, Batch, T, TAU, sat, sstep, vn3, fbm3, floorSampler, presence, tubeClear, pointsClear, placedPoints, rotY, rotX, rotZ, mul3, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, vn3, fbm3, floorSampler, presence, tubeClear, pointsClear, placedPoints, rotY, rotX, rotZ, mul3, budgetK, bendSpots } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, pickW, tintFrom, spot, bendX } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32 } from '../noise.js';
 
@@ -93,9 +93,10 @@ export function layoutPolar(ctx) {
     if (seg.key !== 'polar') continue;
     for (const g of segmentBergs(ctx, seg).list) if (Math.floor(g.sMax / 64) === idx) st.add(g.tpl, g.x, g.y, -(g.s - ctx.s0), g.R, g.size, g.sy, g.size, 1, 1, 1, 1);
   }
-  // rubble keels under the ice (not in open leads)
-  for (let k = 0; k < 16; k++) {
-    const p = spot(ctx, rng, 6, 45, 0.9);
+  // rubble keels under the ice (not in open leads); some on the outside of bends, dead ahead
+  const keelSpots = bendSpots(ctx).map((b) => ({ s: b.s, x: bendX(ctx, b, 5.5, rng, 1.5) }));
+  for (let k = 0; k < 16 + keelSpots.length; k++) {
+    const p = k < keelSpots.length ? keelSpots[k] : spot(ctx, rng, 6, 45, 0.9);
     if (rng() > ctx.weightOf(p.s, 'polar')) continue;
     const c = ctx.ceilingAt(p.x, p.s);
     if (c > ctx.surfaceY - 0.4) continue;

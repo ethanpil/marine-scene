@@ -1,8 +1,8 @@
 // Sunken city: colonnade avenues, gates spanning the flight path, paved roads, block walls, stepped
 // pyramids with statues on the terraces, amphorae and fallen masonry, all overgrown.
-import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, tubeClear, rotX, rotY, rotZ, mul3, orient, budgetK } from './core.js';
+import { Builder, Batch, T, TAU, sat, sstep, lerp, vn3, fbm3, floorSampler, presence, pointsClear, placedPoints, tubeClear, rotX, rotY, rotZ, mul3, orient, budgetK, bendSpots } from './core.js';
 import { stoneInto } from './shapes.js';
-import { putFloor, putAt, pickW, tintFrom, spot } from './scatter.js';
+import { putFloor, putAt, pickW, tintFrom, spot, putBend, microDetail } from './scatter.js';
 import { MAT } from './materials.js';
 import { mulberry32, noise1, noise2 } from '../noise.js';
 
@@ -229,6 +229,13 @@ function specs() {
     urchin: { tpl: T.urchin, scale: [0.06, 0.1], follow: 0.8, tint: tintFrom([[0.4, 0.3, 0.45]]) },
     brain: { tpl: T.brain, scale: [0.3, 0.8], follow: 0.7, tint: tintFrom([[0.45, 0.4, 0.25], [0.35, 0.42, 0.25]]) },
   });
+  Object.assign(S, {
+    bendCol: { tpl: [...T.column, ...T.figure], scale: [1.0, 1.25], follow: 0.05, tint: st },
+    rubble: { tpl: T.rubble, scale: [0.9, 1.8], follow: 1, sink: 0.02, tint: tintFrom([[0.75, 0.72, 0.65], [0.65, 0.62, 0.56]], 0.1) },
+    algae: { tpl: T.algae, scale: [0.6, 1.5], follow: 1, sink: 0.01, tint: tintFrom([[0.6, 0.7, 0.4], [0.75, 0.55, 0.45]], 0.12) },
+    lump: { tpl: T.spongeLump, scale: [0.8, 1.6], follow: 0.7, tint: tintFrom([[0.85, 0.5, 0.15], [0.7, 0.25, 0.55], [0.8, 0.75, 0.2]]) },
+  });
+  S.micro = [{ w: 3, spec: S.rubble }, { w: 1.6, spec: S.algae }, { w: 1.2, spec: S.lump }];
   S.scatter = [
     { w: 2.5, k: 'block' }, { w: 1.5, k: 'drum' }, { w: 2, k: 'amphora' }, { w: 1.2, k: 'rock' }, { w: 1.5, k: 'sponge' },
     { w: 1.2, k: 'soft', sway: true }, { w: 1.2, k: 'fan', sway: true }, { w: 0.8, k: 'anem', sway: true }, { w: 1, k: 'urchin' }, { w: 1, k: 'brain' },
@@ -282,7 +289,7 @@ function temple(ctx, fs, st, sw, t) {
 export function layoutRuins(ctx) {
   if (presence(ctx, 'ruins') <= 0) return null;
   const sp = specs(), rng = ctx.rng, fs = floorSampler(ctx);
-  const st = new Batch(MAT.static, 100000 * budgetK(ctx, 'ruins')), sw = new Batch(MAT.sway, 25000 * budgetK(ctx, 'ruins'));
+  const st = new Batch(MAT.static, 115000 * budgetK(ctx, 'ruins')), sw = new Batch(MAT.sway, 25000 * budgetK(ctx, 'ruins'));
   const idx = Math.floor(ctx.s0 / 64);
   for (const seg of ctx.segments) {
     if (seg.key !== 'ruins') continue;
@@ -335,6 +342,8 @@ export function layoutRuins(ctx) {
       st.add(tpl, x, y - 0.25, -(s - ctx.s0), rotY(yaw + ry), 1, 0.9 + rng() * 0.3, 1, 0.9 + rng() * 0.15, 0.9 + rng() * 0.15, 0.88 + rng() * 0.15, 1);
     }
   }
+  for (const b of bendSpots(ctx)) if (rng() < ctx.weightOf(b.s, 'ruins') * 0.75) putBend(ctx, fs, st, sp.bendCol, b, rng);
+  microDetail(ctx, fs, st, rng, 'ruins', sp.micro, 140, 30);
   for (let k = 0; k < 150; k++) {
     const p = spot(ctx, rng, 0, 42, 1.2);
     if (rng() > ctx.weightOf(p.s, 'ruins')) continue;

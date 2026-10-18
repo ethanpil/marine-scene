@@ -375,3 +375,36 @@ export function seaLettuce(seed, { n = 4, s = 0.25 } = {}) {
   }
   return b.build();
 }
+
+// ---------- floor micro detail ----------
+// patch of pebbles / rubble / shell grit: n small flattened lumps in a disc of radius r
+export function pebblePatch(seed, { n = 16, r = 0.5, size = 0.05, flat = 0.5, col = [0.8, 0.78, 0.72], growth = 0.3, mode = 0, elong = 1 } = {}) {
+  const b = new Builder(), rng = mulberry32(seed);
+  for (let k = 0; k < n; k++) {
+    const rr = r * Math.sqrt(rng()), a = rng() * TAU, cx = Math.cos(a) * rr, cz = Math.sin(a) * rr;
+    const sz = size * (0.4 + rng() * 1.2), yaw = rng() * TAU, cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const el = 1 + (elong - 1) * rng(), k2 = 0.75 + 0.5 * rng(), seedK = (rng() * 100) | 0;
+    b.blob(0, (x, y, z, o) => {
+      const d = 1 + 0.3 * vn3(x * 2 + seedK, y * 2, z * 2, seed);
+      const lx = x * sz * el * d, lz = z * sz * d, ly = Math.max(-0.3, y) * sz * flat * d;
+      o[0] = cx + cy * lx - sy * lz; o[1] = ly + sz * flat * 0.25; o[2] = cz + sy * lx + cy * lz;
+      const ao = y < 0 ? 0.55 : 1;
+      o[3] = col[0] * k2 * ao; o[4] = col[1] * k2 * ao; o[5] = col[2] * k2 * ao; o[6] = growth; o[7] = mode;
+    });
+  }
+  return b.build();
+}
+
+// low irregular algae / turf / microbial film patch hugging the floor (slightly domed)
+export function algaePatch(seed, { r = 0.8, col = [0.3, 0.38, 0.12] } = {}) {
+  const b = new Builder();
+  b.grid(16, 3, (u, v, i, j, o) => {
+    const a = u * TAU, R = r * (1 + 0.35 * vn3(Math.cos(a) * 1.3, Math.sin(a) * 1.3, seed, seed) + 0.15 * Math.sin(a * 5 + seed));
+    const rr = v * R;
+    o[0] = Math.cos(a) * rr; o[2] = Math.sin(a) * rr;
+    o[1] = 0.025 * (1 - v * v) + 0.012 * vn3(o[0] * 6, 0, o[2] * 6, seed + 1) + 0.01;
+    const c = 0.75 + 0.35 * vn3(o[0] * 4, 1, o[2] * 4, seed + 2);
+    o[3] = col[0] * c; o[4] = col[1] * c; o[5] = col[2] * c; o[6] = 0; o[7] = 2;
+  }, { wrapU: true, flip: true });
+  return b.build();
+}
