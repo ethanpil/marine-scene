@@ -256,13 +256,15 @@ export const SPECIES = {
   whitetip: merge(SHARK, { body: { depth: 0.15 }, col: { d: 0x7a7a74, b: 0xe6e6e0, a: 0xf6f6f2 }, finEdge: 0.95, beh: { ...SOLO, dist: [6, 25], speed: [0.5, 1] } }),
   blacktip: merge(SHARK, { col: { d: 0x8a8e88, a: 0x0c0c0c }, finEdge: 0.95, size: [1.3, 1.8] }),
   eagleRay: merge(RAY, {
-    body: ST([0, 0.03, 0.07, 0.12, 0.2, 0.28, 0.34, 0.4, 0.45, 0.52, 0.7, 1.0],
-      [0.02, 0.035, 0.05, 0.06, 0.065, 0.06, 0.05, 0.035, 0.02, 0.01, 0.005, 0.002],
-      [0.015, 0.025, 0.035, 0.04, 0.04, 0.035, 0.03, 0.02, 0.012, 0.006, 0.003, 0.001],
-      [0.03, 0.05, 0.08, 0.35, 0.72, 0.9, 0.62, 0.3, 0.07, 0.012, 0.006, 0.0]),
-    eye: { t: 0.04, v: 0.5, r: 0.01, x: 0.045 },
-    col: C(0x1c2430, 0xf2f2ee, 0xf2f2ee, 0x1c2430), pat: [27, 9, 0.28], cs: [0.0, 1.0],
-    mot: { amp: 0.26, waves: 0.4 }, beh: { ...POD, n: [2, 6], zone: 'floor', alt: [1.5, 4], speed: [0.8, 1.3], dist: [4, 20], routes: { cross: 2, oncoming: 2, lead: 1 } }, size: [1.4, 2.2],
+    // angular diamond wings, a distinct duck-bill head set forward of the wings, very long whip tail
+    body: { ...ST([0, 0.02, 0.05, 0.075, 0.09, 0.13, 0.18, 0.22, 0.26, 0.29, 0.32, 0.36, 0.5, 0.75, 1.0],
+      [0.01, 0.018, 0.022, 0.021, 0.024, 0.028, 0.026, 0.022, 0.016, 0.01, 0.007, 0.004, 0.0025, 0.0015, 0],
+      [0.008, 0.012, 0.014, 0.013, 0.014, 0.016, 0.015, 0.012, 0.009, 0.006, 0.004, 0.003, 0.002, 0.001, 0],
+      [0.012, 0.022, 0.028, 0.026, 0.05, 0.16, 0.27, 0.3, 0.2, 0.08, 0.025, 0.008, 0.004, 0.002, 0]), thinW: 0.035, thinB: 0.12, segL: 1.4 },
+    eye: { t: 0.05, v: 0.5, r: 0.006, x: 0.024, axis: [1, 0.5, 0.2] },
+    col: C(0x1c2430, 0xf2f2ee, 0xf2f2ee, 0x1c2430), pat: [27, 30, 0.28], cs: [0.0, 1.0],
+    mot: { amp: 0.6, waves: 2.0, c0: 0.03, beat: 0.45, idle: 0.28 },
+    beh: { ...POD, n: [2, 6], zone: 'floor', alt: [1.5, 4], speed: [0.8, 1.3], dist: [4, 20], routes: { cross: 2, oncoming: 2, lead: 1 } }, size: [2.4, 3.6],
   }),
   bluespotRay: merge(RAY, {
     body: ST([0, 0.04, 0.1, 0.18, 0.26, 0.36, 0.44, 0.5, 0.6, 0.8, 1.0],
@@ -271,7 +273,7 @@ export const SPECIES = {
       [0, 0.18, 0.3, 0.355, 0.36, 0.32, 0.2, 0.05, 0.016, 0.008, 0.0]),
     eye: { t: 0.13, v: 0.6, r: 0.014, x: 0.05 },
     col: C(0xb09060, 0xf0eadc, 0x2a80ff, 0x9a7a50), pat: [3, 14, 0.24], pat2: [6, 9, 0.62],
-    mot: { amp: 0.14, waves: 1.15 }, beh: { kind: 'rest', n: [1, 3], spread: 3, lift: [5, 9], speed: [0.5, 0.9], alt: [0.3, 1] }, size: [0.45, 0.75],
+    mot: { amp: 0.14, waves: 4.0, c0: 0.07 }, beh: { kind: 'rest', n: [1, 3], spread: 3, lift: [5, 9], speed: [0.5, 0.9], alt: [0.3, 1] }, size: [0.45, 0.75],
   }),
   southernRay: merge(RAY, {
     body: ST([0, 0.04, 0.1, 0.18, 0.26, 0.36, 0.44, 0.5, 0.6, 0.8, 1.0],
@@ -280,7 +282,7 @@ export const SPECIES = {
       [0, 0.2, 0.33, 0.39, 0.4, 0.36, 0.22, 0.05, 0.016, 0.008, 0.0]),
     eye: { t: 0.13, v: 0.6, r: 0.012, x: 0.05 },
     col: C(0xa89c84, 0xf0eadc, 0x6e6454, 0x988c76, 0xc4b89e), pat: [6, 3, 0.55], pat2: [25, 70, 0.55],
-    mot: { amp: 0.13, waves: 1.1 }, beh: { kind: 'rest', n: [1, 2], spread: 5, lift: [6, 11], speed: [0.5, 0.9], alt: [0.3, 1.2] }, size: [1.0, 1.6],
+    mot: { amp: 0.12, waves: 4.0, c0: 0.08 }, beh: { kind: 'rest', n: [1, 2], spread: 5, lift: [6, 11], speed: [0.5, 0.9], alt: [0.3, 1.2] }, size: [1.0, 1.6],
   }),
   manta: merge(RAY, {
     body: ST([0, 0.04, 0.1, 0.2, 0.32, 0.42, 0.48, 0.55, 0.62, 0.7, 0.78, 0.86, 0.94],
@@ -290,7 +292,7 @@ export const SPECIES = {
     fins: { ceph: { t: 0.0, span: 0.04, a: 0, h: 0.13, dip: 0.5, sweep: 0, fwd: 1.4, shape: 'paddle', inset: 0.95, vN: 1 } },
     eye: { t: 0.05, v: 0.2, r: 0.012, x: 0.2, axis: [1, 0.2, 0.3] },
     col: C(0x14181e, 0xf2f2f0, 0x2a2a2a, 0x14181e, 0xe8e8e4), pat: [3, 5, 0.22], pat2: [6, 2.0, 0.72], cs: [0.0, 1.0],
-    mot: { amp: 0.26, waves: 0.32, beat: 0.35, idle: 0.22 },
+    mot: { amp: 0.26, waves: 1.0, c0: 0.12, beat: 0.3, idle: 0.18 },
     beh: { ...GIANT, n: [1, 3], speed: [0.8, 1.3], dist: [8, 30], over: [2, 5] }, size: [2.2, 3.2], hl: true, scars: 0.4,
   }),
   moray: merge(EEL, {
@@ -576,7 +578,7 @@ export const SPECIES = {
       [0.015, 0.025, 0.035, 0.04, 0.04, 0.035, 0.03, 0.02, 0.012, 0.006, 0.003, 0.001],
       [0.04, 0.06, 0.08, 0.3, 0.6, 0.72, 0.52, 0.25, 0.07, 0.012, 0.006, 0.0]),
     eye: { t: 0.05, v: 0.6, r: 0.01, x: 0.05 },
-    col: C(0x2a2622, 0xf0ece4, 0, 0x2a2622), mot: { amp: 0.24, waves: 0.45 },
+    col: C(0x2a2622, 0xf0ece4, 0, 0x2a2622), mot: { amp: 0.22, waves: 1.0, c0: 0.05 },
     beh: { ...CRUISE, zone: 'floor', alt: [1, 3], speed: [0.6, 1.0] }, size: [0.8, 1.3],
   }),
   harbourSeal: fish({

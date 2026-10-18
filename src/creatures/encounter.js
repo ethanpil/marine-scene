@@ -501,7 +501,7 @@ export class Encounter {
     out[1] = this.Cy + sy + Math.sin(w * 1.3) * wob * 0.4;
     out[2] = this.Cz - ox * s + oz * c;
     out[3] = this.Cvx; out[4] = this.Cvy; out[5] = this.Cvz;
-    if (this.zone === 'surface' && k === 'pod') { // porpoising arcs near the surface
+    if ((this.zone === 'surface' || this.zone === 'ceiling') && k === 'pod') { // porpoising arcs near the surface / ice
       const ph = this.age * (0.35 + this.RP[o + 3] * 0.15) + this.RP[o] * TAU;
       out[1] += -Math.abs(Math.sin(ph)) * 2.2 + 1.0;
     }

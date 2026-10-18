@@ -69,10 +69,10 @@ export const TABLES = {
     ['atolla', 3, 70], ['combJelly', 3, 70], ['helmetJelly', 2.5, 80], ['pelagia', 2, 80], ['siphonophore', 1.5, 160],
     ['vampireSquid', 1.5, 140], ['giantSquid', 0.35, 700], ['glowSquid', 2.5, 80], ['spermWhale', 0.3, 700], ['proc:abyss', 2, 40],
   ] },
-  polar: { cover: 3, target: 11, lat: 50, list: [
-    ['emperorPenguin', 2.5, 90], ['adeliePenguin', 3, 70], ['leopardSeal', 1.5, 150], ['weddellSeal', 1.5, 150], ['krill', 3, 60],
+  polar: { cover: 3, target: 11, lat: 50, ensure: { S: ['adeliePenguin', 'emperorPenguin'], N: ['beluga', 'narwhal', 'harbourSeal'] }, list: [
+    ['emperorPenguin', 5, 35], ['adeliePenguin', 6, 25], ['leopardSeal', 1.5, 150], ['weddellSeal', 1.5, 150], ['krill', 3, 60],
     ['icefish', 3, 60], ['toothfish', 1.5, 120], ['orca', 0.6, 400], ['humpback', 0.5, 450],
-    ['beluga', 2, 140], ['narwhal', 1.3, 200], ['arcticCod', 4, 50], ['harbourSeal', 1.5, 150], ['greenlandShark', 0.5, 450],
+    ['beluga', 4, 60], ['narwhal', 3, 80], ['arcticCod', 4, 50], ['harbourSeal', 1.5, 150], ['greenlandShark', 0.5, 450],
     ['lionsMane', 1.5, 140], ['moonJelly', 1.5, 100], ['combJelly', 1, 120], ['proc:polar', 1.5, 40],
   ] },
 };
@@ -105,6 +105,7 @@ export class Director {
     const sys = this.sys;
     if (!this.primed || c.jumped) { this.prime(c, !this.primed); this.primed = true; return; }
     // Coverage control: keep enough groups that are (or will soon be) readable inside the forward view.
+    if (this.ensureTick(c)) return;
     const cov = this.coverage(c), want = this.coverWant(c);
     // keep a pipeline of lead groups: one swimming ahead of the camera, the next one closing in
     let leads = 0;
@@ -154,6 +155,27 @@ export class Director {
     return null;
   }
 
+  // Signature animals that must reliably be present in a biome (e.g. penguins under Antarctic ice):
+  // when none is active, spawn one right away, ignoring cooldowns.
+  ensureTick(c) {
+    const sys = this.sys;
+    this.ensureT = (this.ensureT || 0) - 1;
+    if (this.ensureT > 0) return false;
+    this.ensureT = 20; // checked a few times per second at most
+    const s = c.s + 40, w = sys.seq.weights(s)[0];
+    const T = TABLES[w.key];
+    if (!T || !T.ensure || w.w < 0.6) return false;
+    const set = T.ensure[this.hemi(this.region(s))] || [];
+    if (!set.length || sys.enc.some((e) => set.includes(e.sp.key) && !e.done && -(e.anchorZ + e.bounds.z) - c.s > -10)) return false;
+    if (sys.enc.length >= sys.maxEnc) return false;
+    const sp = this.species(set[Math.floor(this.rng() * set.length)]);
+    const plan = sp && this.plan(sp, c, true, sys.seq.weights(c.s + 50), sys.maxInstances - sys.instances, sys.maxTris - sys.trisTotal, !this.primedEnsure, false);
+    this.primedEnsure = true;
+    if (!plan) return false;
+    if (sys.spawn(sp, plan)) { this.seen.set(sp.key, this.clock); this.lastSpawn = this.clock; return true; }
+    return false;
+  }
+
   coverWant(c) {
     let t = 0;
     for (const e of this.sys.seq.weights(c.s + 60)) t += (TABLES[e.key]?.cover ?? 3) * e.w;
@@ -189,6 +211,9 @@ export class Director {
     }
   }
 
+  // Polar segments: ~75% Antarctic (penguins, leopard seals, krill), ~25% Arctic (belugas, narwhals).
+  hemi(region) { return hash2i(region, 7, 3) < 0.25 ? 'N' : 'S'; }
+
   // Region seed for procedural species / colour variants (stable within a biome segment).
   region(s) {
     const seq = this.sys.seq, g = seq.segs[seq.segAt(s)];
@@ -200,7 +225,7 @@ export class Director {
     const sProbe = c.s + (near ? 50 : sys.fogD);
     const ws = sys.seq.weights(sProbe);
     const region = this.region(sProbe);
-    const hemi = hash2i(region, 7, 3) < 0.5 ? 'N' : 'S';
+    const hemi = this.hemi(region);
     const cands = []; let tot = 0;
     const activeCount = new Map();
     for (const e of sys.enc) activeCount.set(e.sp.key, (activeCount.get(e.sp.key) || 0) + 1);
@@ -380,6 +405,7 @@ export class Director {
         else if (route === 'escort') { plan.s0 = c.s - 30 - rng() * 10; plan.vs = c.speed + 2; l = side * rr([4, 8]); }
       }
       plan.l0 = latLim(l);
+      if (beh.zone === 'ceiling' && route !== 'hold' && rng() < 0.5) plan.zone = 'mid'; // penguins also swoop past at eye level
     }
     // validate water column at the spawn point; shrink lateral offset if needed
     const reg = sys.env && sys.env.obstacles;

@@ -92,7 +92,7 @@ export async function measure(secs = 180) {
   const M = window.__crMetric; window.__crMetric = null;
   if (measure.shot) { window.__ocean.advance(0.4); await snap(measure.shot, false); }
   const out = {};
-  for (const k in M) out[k] = `${((100 * M[k].hit) / M[k].f).toFixed(0)}% ray ${((100 * M[k].ray) / M[k].f).toFixed(0)}% ceph ${((100 * M[k].ceph) / M[k].f).toFixed(0)}% (${M[k].f}f)`;
+  for (const k in M) out[k] = `${((100 * M[k].hit) / M[k].f).toFixed(0)}% ray ${((100 * M[k].ray) / M[k].f).toFixed(0)}% ceph ${((100 * M[k].ceph) / M[k].f).toFixed(0)}% peng ${((100 * (M[k].peng || 0)) / M[k].f).toFixed(0)}% (${M[k].f}f)`;
   out.wall = ((performance.now() - t0) / 1000).toFixed(0) + 's';
   return out;
 }

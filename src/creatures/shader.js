@@ -78,18 +78,18 @@ void crDeform(inout vec3 p, inout vec3 n) {
     n.z += 2.0 * bend * tb * n.x;
     if (isFlipper) crRotZ(p, n, aG.z, (0.12 * sin(ph * 0.5 + 0.7) - 0.05) * sign(p.x));
   } else if (mode < 2.5) {
-    // rays: wing flap / undulation, whip tail
-    float ax = abs(p.x);
-    float arg = ph - K * tt;
+    // rays: a travelling wave runs front-to-back along each pectoral fin (leading edge leads, trailing
+    // edge lags), flex grows smoothly toward the tips; the central disc (half-width c0) stays level.
+    float ax = abs(p.x), w = max(ax - c0, 0.0);
+    float arg = ph - K * tt - 2.0 * w;
     float s = sin(arg), c = cos(arg);
-    float sq = sqrt(ax);
-    float a15 = ax * sq;
-    p.y += A * a15 * s;
-    n.x -= A * 1.5 * sq * s * sign(p.x) * n.y;
-    n.z -= A * a15 * c * K * n.y;
-    float tail = smoothstep(0.5, 1.0, tt);
+    float f = pow(w, 1.6), df = w > 0.0 ? 1.6 * pow(w, 0.6) : 0.0;
+    p.y += A * f * s + A * 0.012 * sin(ph + 1.6) * (tt - 0.25); // gentle pitch bob of the disc
+    n.x -= A * (df * s - 2.0 * f * c) * sign(p.x) * n.y;
+    n.z -= A * f * c * K * n.y;
+    float tail = smoothstep(0.35, 1.0, tt);
     float tb = tt - 0.3;
-    p.x += tail * 0.025 * sin(ph * 0.5 - tt * 6.0) + bend * tb * tb;
+    p.x += tail * 0.02 * sin(ph * 0.5 - tt * 6.0) + bend * tb * tb;
   } else if (mode < 3.5) {
     // flipper strokes (turtles, penguins, sea lions)
     float tb = tt - 0.4;
