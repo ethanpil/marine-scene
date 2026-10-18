@@ -466,6 +466,14 @@ function extras(gb, sp, prof, det) {
       }
     }
   }
+  if (X.barbels) { // pair of chin barbels (goatfish, nurse shark)
+    prof(0.05, o);
+    for (const side of [1, -1]) {
+      const L = X.barbels.len, x0 = side * o.wid * 0.35, y0 = o.yc - o.bot * 0.75, z0 = 0.5 - 0.05, pts = [];
+      for (let i = 0; i <= 5; i++) { const f = i / 5; pts.push([x0 * (1 + f * 0.4), y0 - L * 0.8 * f, z0 - L * 0.5 * f * f]); }
+      tube(gb, pts, [0.004, 0.0035, 0.003, 0.0025, 0.002, 0], 4, () => [PART.BODY, -1, 0, 0]);
+    }
+  }
   if (X.horns) { // narwhal-like / cephalic lobes handled by fins; here: crown spikes (seahorse unused)
   }
 }
@@ -619,7 +627,7 @@ export function buildOctopus(sp) {
       let r = 0.06 + d, y = 0.07 * Math.exp(-f * 6) + 0.018;
       if (f > 0.75) { const c = (f - 0.75) / 0.25; r -= c * c * 0.05; y += c * c * 0.06; }
       pts.push([Math.cos(a) * r, y, Math.sin(a) * r]);
-      rad.push(i === n ? 0 : 0.03 * (1 - 0.88 * f));
+      rad.push(i === n ? 0 : 0.045 * (1 - 0.9 * Math.pow(f, 0.8)));
     }
     tube(gb, pts, rad, det.nL > 20 ? 6 : 4, (i) => [PART.ARM, 0, k, (i / n) * L], 1);
   }

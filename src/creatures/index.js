@@ -73,8 +73,22 @@ export class Creatures {
       if (hit) break;
     }
     const key = this.seq.weights(cam.s)[0].key;
-    const r = M[key] || (M[key] = { f: 0, hit: 0 });
+    const r = M[key] || (M[key] = { f: 0, hit: 0, ray: 0, ceph: 0 });
     r.f++; if (hit) r.hit++;
+    // how often a ray / a cephalopod is readable in frame (>= 20 px)
+    let ray = false, ceph = false;
+    for (const e of this.enc) {
+      if (!e.visible) continue;
+      const isRay = e.sp.mot.mode === 2, isCeph = e.sp.plan === 'squid' || e.sp.plan === 'octopus';
+      if (!(isRay && !ray) && !(isCeph && !ceph)) continue;
+      for (let i = 0; i < e.n; i++) {
+        v.set(e.P[i * 3], e.P[i * 3 + 1], e.anchorZ + e.P[i * 3 + 2] - cam.Oz);
+        const d = v.distanceTo(cp);
+        if (d > maxD || !fr.containsPoint(v) || (e.SZ[i] * K) / Math.max(d, 0.5) < 20) continue;
+        if (isRay) ray = true; else ceph = true; break;
+      }
+    }
+    if (ray) r.ray++; if (ceph) r.ceph++;
   }
 
   update(dt, time, cam) {

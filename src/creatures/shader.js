@@ -26,6 +26,7 @@ flat varying vec4 vPat;
 flat varying vec4 vPat2;
 flat varying vec4 vMot;
 flat varying float vFade;
+flat varying float vExc;
 
 void crRotZ(inout vec3 p, inout vec3 n, float x0, float th) {
   float cs = cos(th), sn = sin(th);
@@ -120,7 +121,7 @@ void crDeform(inout vec3 p, inout vec3 n) {
       float pulse = A * 0.06 * (0.5 + 0.5 * sin(ph)) * (1.0 - smoothstep(0.45, 0.65, tt));
       p.xy *= 1.0 - pulse;
     }
-    if (isMedian) p.y += aG.w * 0.07 * sin(ph * 2.3 - aG.z * 10.0);
+    if (isMedian) p.y += aG.w * aG.w * 0.022 * sin(ph * 2.3 - aG.z * 12.0); // gentle travelling ripple along the fin
     if (isArm) {
       float d = aG.w;
       p.x += sin(ph * 0.6 - d * 7.0 + aG.z * 1.3) * d * 0.05;
@@ -129,15 +130,20 @@ void crDeform(inout vec3 p, inout vec3 n) {
     float tb = tt - 0.4;
     p.x += bend * tb * tb;
   } else if (mode < 6.5) {
-    // octopus resting: curling arms, breathing mantle (local +y up)
+    // octopus (local +y up): curling / crawling arms, breathing mantle; J = jet (arms stream behind)
+    float J = clamp(bend, 0.0, 1.0);
     if (isArm) {
       float d = aG.w;
       float w = sin(ph * 0.35 + aG.z * 1.7 - d * 3.0);
-      p.y += d * d * 0.16 * (0.6 + 0.4 * w);
+      p.y += d * d * 0.16 * (0.6 + 0.4 * w) * (1.0 - J);
       vec2 dir = normalize(p.xz + vec2(1e-4));
-      p.xz += vec2(-dir.y, dir.x) * sin(ph * 0.25 + aG.z * 2.3 - d * 4.0) * d * 0.07;
+      p.xz += vec2(-dir.y, dir.x) * sin(ph * 0.25 + aG.z * 2.3 - d * 4.0) * d * 0.07 * (1.0 - J);
+      float r = length(p.xz);
+      vec2 rd = p.xz / max(r, 1e-4);
+      p.xz = rd * mix(r, 0.035 + d * 0.07 + 0.02 * sin(ph * 1.6 - d * 7.0 + aG.z), J);
+      p.y = mix(p.y, 0.04 - d * 0.95, J);
     } else {
-      p *= 1.0 + 0.035 * sin(ph * 0.8) * smoothstep(0.1, 0.45, p.y);
+      p *= 1.0 + (0.035 + 0.07 * J) * sin(ph * (0.8 + 1.6 * J)) * smoothstep(0.1, 0.45, p.y);
     }
   } else if (mode < 7.5) {
     // mola: stiff body, big sculling dorsal + anal fins
@@ -169,6 +175,7 @@ flat varying vec4 vPat;
 flat varying vec4 vPat2;
 flat varying vec4 vMot;
 flat varying float vFade;
+flat varying float vExc;
 
 vec3 crUnpack(float f) {
   float r = floor(f / 65536.0);
@@ -298,6 +305,11 @@ vec2 crPat(float ty, vec2 q, float t, float vN, float sc, float pr, float sd, fl
     vec3 c = crCell(q * sc + sd);
     float r = pr * (0.6 + 0.5 * c.z);
     m = (1.0 - smoothstep(r - 0.08, r, c.x)) * smoothstep(0.0, 0.3, vN);
+  } else if (T == 30) {    // animated chromatophores (octopus): drifting, flickering mottle
+    vec2 drift = vec2(uTime * 0.05, -uTime * 0.035) * pr;
+    float n = crFbm(q * sc + sd + drift);
+    float th = 0.5 + 0.1 * sin(uTime * 0.37 + sd);
+    m = smoothstep(th - 0.07, th + 0.07, n);
   } else if (T == 28) {    // belly patch / chest blaze (vN < sc)
     m = smoothstep(sc + 0.06, sc - 0.06, vN + 0.15 * sin(t * 9.0 + sd) * pr);
   }
@@ -310,7 +322,7 @@ vec3 objectNormal = vec3(normal);
 vec3 crPos = position;
 crDeform(crPos, objectNormal);
 objectNormal = normalize(objectNormal);
-vLoc = position; vGv = aG; vCol = aCol; vCol2 = aCol2; vPat = aPat; vPat2 = aPat2; vMot = aMot; vFade = aAnim.w;
+vLoc = position; vGv = aG; vCol = aCol; vCol2 = aCol2; vPat = aPat; vPat2 = aPat2; vMot = aMot; vFade = aAnim.w; vExc = aAnim.y;
 `;
 
 const FRAG_COLOR = /* glsl */`
@@ -350,6 +362,7 @@ if (crFin) {
   fc = mix(fc, cP2, m2.x * 0.85);
   fc *= 1.0 - pk.y * 0.35 * (0.5 + 0.5 * cos(fu * 34.0)) * fw;
   fc = mix(fc, cA, pk.x * smoothstep(0.72, 0.93, fw));
+  fc = mix(fc, fc * 1.3 + 0.025, smoothstep(0.7, 1.0, fw) * 0.55 * (1.0 - pk.x)); // thin membrane edge
   crCol = mix(mix(crCol, cP, m1.x), fc, smoothstep(0.02, 0.3, fw));
   crSheen *= 0.35;
   crRough = max(crRough, 0.42);
@@ -383,6 +396,15 @@ if (crPart == 4.0) {            // eye: glossy black pupil, iris ring
 }
 // faint scale / skin micro-variation
 crCol *= 0.93 + 0.14 * crNoise(q * 23.0 + sd);
+if (crMode == 0.0 && crPart == 0.0 && vPat2.z > 0.12) {
+  vec2 sq = q * vec2(68.0, 92.0);
+  float scl = abs(sin(sq.x + sq.y * 0.5)) * abs(sin(sq.x - sq.y * 0.5));
+  crCol *= 0.95 + 0.07 * scl;
+  crSheen *= 0.75 + 0.5 * scl;
+  float lline = (1.0 - smoothstep(0.0, 0.022, abs(vN - (0.32 - 0.16 * crT)))) * smoothstep(0.12, 0.2, crT) * smoothstep(0.86, 0.76, crT);
+  crCol = mix(crCol, crCol * 1.3 + 0.015, lline * 0.35);
+}
+if (crMode == 6.0) crCol = mix(crCol, cB * 1.15, clamp(vExc - 1.0, 0.0, 1.0) * 0.55); // blanching when alarmed
 if (glowMode == 1.0) crGlow += cA * m1.x * (0.05 + 3.0 * uGlow) * max(crGlowAmt, 0.2);
 if (glowMode == 2.0) crGlow += cA * (0.03 + 1.6 * uGlow) * crGlowAmt * (crPart == 6.0 ? 0.6 : 1.0);
 if (glowMode == 3.0) crGlow += cA * (0.02 + 2.5 * uGlow) * crGlowAmt * max(m1.x, m2.x);
@@ -423,7 +445,14 @@ function patchShader(shader, jelly) {
     .replace('#include <color_fragment>', FRAG_COLOR)
     .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = crRough;')
     .replace('#include <aomap_fragment>', FRAG_SHEEN);
-  const emis = jelly
+  const finT = `if (crFin) {
+      vec3 vdir = normalize(vWPos - cameraPosition);
+      float bl = pow(max(dot(vdir, uSunDir), 0.0), 3.0);
+      float dB = max(0.0, uSurfaceY - vWPos.y);
+      crGlow += diffuseColor.rgb * (uSunColor * uSunScatter * bl * 0.55 * exp(-uLightSigma * dB) * skyVis(vWPos) + 0.05 * uAmbientScale);
+    }
+  `;
+  const emis = finT + (jelly
     ? `totalEmissiveRadiance += crGlow;
        {
          float fres = 1.0 - abs(dot(normalize(vViewPosition), normal));
@@ -432,7 +461,7 @@ function patchShader(shader, jelly) {
          a = max(a, max(m1.x, m2.x) * baseA * 1.4);
          diffuseColor.a = clamp(a + dot(crGlow, vec3(0.3)) * 0.5, 0.0, 0.95);
        }`
-    : 'totalEmissiveRadiance += crGlow;';
+    : 'totalEmissiveRadiance += crGlow;');
   fs = fs.replace('#include <emissivemap_fragment>', emis);
   if (jelly) fs = fs.replace('float crSheen = vPat2.z;', 'float crSheen = 0.35;');
   shader.fragmentShader = fs;

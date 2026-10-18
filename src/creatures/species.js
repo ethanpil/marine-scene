@@ -262,7 +262,7 @@ export const SPECIES = {
       [0.03, 0.05, 0.08, 0.35, 0.72, 0.9, 0.62, 0.3, 0.07, 0.012, 0.006, 0.0]),
     eye: { t: 0.04, v: 0.5, r: 0.01, x: 0.045 },
     col: C(0x1c2430, 0xf2f2ee, 0xf2f2ee, 0x1c2430), pat: [27, 9, 0.28], cs: [0.0, 1.0],
-    mot: { amp: 0.26, waves: 0.4 }, beh: { ...CRUISE, n: [1, 4], zone: 'floor', alt: [2, 6], speed: [0.8, 1.3] }, size: [1.4, 2.2],
+    mot: { amp: 0.26, waves: 0.4 }, beh: { ...POD, n: [2, 6], zone: 'floor', alt: [1.5, 4], speed: [0.8, 1.3], dist: [4, 20], routes: { cross: 2, oncoming: 2, lead: 1 } }, size: [1.4, 2.2],
   }),
   bluespotRay: merge(RAY, {
     body: ST([0, 0.04, 0.1, 0.18, 0.26, 0.36, 0.44, 0.5, 0.6, 0.8, 1.0],
@@ -270,8 +270,8 @@ export const SPECIES = {
       [0, 0.02, 0.025, 0.03, 0.03, 0.025, 0.018, 0.01, 0.006, 0.004, 0.0],
       [0, 0.18, 0.3, 0.355, 0.36, 0.32, 0.2, 0.05, 0.016, 0.008, 0.0]),
     eye: { t: 0.13, v: 0.6, r: 0.014, x: 0.05 },
-    col: C(0xb09060, 0xf0eadc, 0x2a80ff, 0x9a7a50), pat: [3, 14, 0.24],
-    mot: { amp: 0.14, waves: 1.15 }, beh: { ...SOLO, alt: [0.2, 0.7], speed: [0.2, 0.5] }, size: [0.4, 0.7],
+    col: C(0xb09060, 0xf0eadc, 0x2a80ff, 0x9a7a50), pat: [3, 14, 0.24], pat2: [6, 9, 0.62],
+    mot: { amp: 0.14, waves: 1.15 }, beh: { kind: 'rest', n: [1, 3], spread: 3, lift: [5, 9], speed: [0.5, 0.9], alt: [0.3, 1] }, size: [0.45, 0.75],
   }),
   southernRay: merge(RAY, {
     body: ST([0, 0.04, 0.1, 0.18, 0.26, 0.36, 0.44, 0.5, 0.6, 0.8, 1.0],
@@ -279,8 +279,8 @@ export const SPECIES = {
       [0, 0.02, 0.025, 0.03, 0.03, 0.025, 0.018, 0.01, 0.006, 0.004, 0.0],
       [0, 0.2, 0.33, 0.39, 0.4, 0.36, 0.22, 0.05, 0.016, 0.008, 0.0]),
     eye: { t: 0.13, v: 0.6, r: 0.012, x: 0.05 },
-    col: C(0x6a6458, 0xf0eadc, 0x4a443a, 0x5a544a), pat: [6, 3, 0.55],
-    mot: { amp: 0.13, waves: 1.1 }, beh: { ...SOLO, alt: [0.2, 0.7], speed: [0.2, 0.5] }, size: [1.0, 1.6],
+    col: C(0xa89c84, 0xf0eadc, 0x6e6454, 0x988c76, 0xc4b89e), pat: [6, 3, 0.55], pat2: [25, 70, 0.55],
+    mot: { amp: 0.13, waves: 1.1 }, beh: { kind: 'rest', n: [1, 2], spread: 5, lift: [6, 11], speed: [0.5, 0.9], alt: [0.3, 1.2] }, size: [1.0, 1.6],
   }),
   manta: merge(RAY, {
     body: ST([0, 0.04, 0.1, 0.2, 0.32, 0.42, 0.48, 0.55, 0.62, 0.7, 0.78, 0.86, 0.94],
@@ -291,7 +291,7 @@ export const SPECIES = {
     eye: { t: 0.05, v: 0.2, r: 0.012, x: 0.2, axis: [1, 0.2, 0.3] },
     col: C(0x14181e, 0xf2f2f0, 0x2a2a2a, 0x14181e, 0xe8e8e4), pat: [3, 5, 0.22], pat2: [6, 2.0, 0.72], cs: [0.0, 1.0],
     mot: { amp: 0.26, waves: 0.32, beat: 0.35, idle: 0.22 },
-    beh: { ...GIANT, n: [1, 3], speed: [0.8, 1.3], dist: [15, 45] }, size: [2.2, 3.2], hl: true,
+    beh: { ...GIANT, n: [1, 3], speed: [0.8, 1.3], dist: [8, 30], over: [2, 5] }, size: [2.2, 3.2], hl: true,
   }),
   moray: merge(EEL, {
     body: { depth: 0.085, width: 0.62, tm: 0.13, nose: 0.6, bumps: [['t', 0.07, 0.04, 0.18]] },
@@ -333,10 +333,10 @@ export const SPECIES = {
   }),
   octopus: {
     plan: 'octopus', det: 1, octo: { armLen: 0.55 },
-    col: C(0xa0482a, 0xd08a6a, 0x5a1e10, 0xb05a3a, 0xf0c0a0, 0xe0a040), pat: [6, 7, 0.52], pat2: [3, 28, 0.18], cs: [-2, 0],
-    finEdge: 0, finRays: 0, iris: 0.8, glowMode: 0, glow: 0, sheen: 0.2, rough: 0.5,
+    col: C(0xb8542c, 0xe8b08a, 0x5e2010, 0xc8683e, 0xf6dcc0, 0xe0a040), pat: [30, 6, 1.0], pat2: [3, 32, 0.2], cs: [-2, 0],
+    finEdge: 0, finRays: 0, iris: 0.8, glowMode: 0, glow: 0, sheen: 0.28, rough: 0.42,
     mot: { mode: 6, amp: 0, waves: 0, c0: 0, beat: 0, idle: 0.5 },
-    beh: { kind: 'octo', n: [1, 1] }, size: [0.6, 1.1],
+    beh: { kind: 'octo', n: [1, 2], speed: [0.08, 0.2], spread: 3, lift: [4, 6.5] }, size: [0.9, 1.4],
   },
   cuttlefish: fish({
     plan: 'squid', det: 1,
@@ -346,7 +346,7 @@ export const SPECIES = {
       [0, 0.05, 0.075, 0.07, 0.11, 0.13, 0.12, 0.09, 0.05, 0]),
     squid: { eyeT: 0.12, eyeR: 0.024, armsFront: true, armLen: 0.13, armR: 0.012, spread: 0.1, skirt: { t0: 0.2, t1: 0.97, h: 0.035 } },
     col: C(0x6a5040, 0xd8c8b0, 0x2a1a12, 0x8a7060, 0xf0e8d8, 0x30c060), pat: [14, 9, 0.6], pat2: [6, 4, 0.6], cs: [-0.3, 0.2], iris: 0.9,
-    mot: { mode: 5, amp: 0.5, beat: 0.6, idle: 0.6 }, beh: { ...HOVER, speed: [0.05, 0.25], alt: [0.4, 1.5] }, size: [0.25, 0.45], sheen: 0.25,
+    mot: { mode: 5, amp: 0.5, beat: 0.6, idle: 0.6 }, beh: { kind: 'school', n: [1, 4], speed: [0.1, 0.4], zone: 'mid', routes: { hold: 3, lead: 1 } }, size: [0.3, 0.5], sheen: 0.25,
   }),
   reefSquid: fish({
     plan: 'squid', det: 1,
@@ -357,7 +357,7 @@ export const SPECIES = {
     squid: { fin: { t0: 0.02, t1: 0.42, h: 0.06, shape: 'long', sweep: 0.25 }, eyeT: 0.555, eyeR: 0.02, armLen: 0.2, armR: 0.008, tentacles: true, tentLen: 0.3, spread: 0.25 },
     col: C(0xb8907a, 0xe8d8c8, 0x7a3020, 0xc8a890, 0, 0x40d0a0), pat: [3, 45, 0.28], cs: [-0.2, 0.2], iris: 0.9, sheen: 0.4,
     mot: { mode: 5, amp: 0.6, beat: 0.5, idle: 0.5 },
-    beh: { kind: 'school', n: [6, 18], speed: [0.2, 0.5], zone: 'floor', alt: [1.5, 4], routes: { hold: 1 } }, size: [0.25, 0.4],
+    beh: { kind: 'school', n: [4, 12], speed: [0.15, 0.5], zone: 'mid', routes: { hold: 3, lead: 1 } }, size: [0.28, 0.42],
   }),
   whaleShark: merge(SHARK, {
     body: { depth: 0.18, width: 1.05, tm: 0.3, nose: 0.4, noseB: 0.5, tail: 1.2, ped: 0.15, tEnd: 0.73, n: 2.0, nb: 2.8, snout: -0.1, bumps: [['w', 0.03, 0.05, 0.45], ['t', 0.04, 0.05, -0.25]] },
@@ -824,6 +824,77 @@ export const SPECIES = {
     beh: { ...DRIFT, n: [1, 3] },
   }),
 };
+
+// ---------- sand dwellers & extra cephalopods ----------
+Object.assign(SPECIES, {
+  flounder: fish({
+    body: { depth: 0.48, width: 0.12, tm: 0.42, nose: 0.5, tail: 1.2, ped: 0.1, tEnd: 0.84, n: 2.4 },
+    fins: { dorsal: [{ t0: 0.06, t1: 0.82, h: 0.05, shape: 'long', sweep: 0.2 }], anal: [{ t0: 0.25, t1: 0.82, h: 0.05, shape: 'long', sweep: 0.2 }], pelv: null, pect: { h: 0.06 }, caudal: { shape: 'rounded', size: 0.15 } },
+    eye: { t: 0.12, v: 0.25, r: 0.03, axis: [1, 0.4, 0.3] },
+    col: C(0xd2c4a2, 0xece6d6, 0x5a8ac0, 0xc0b090, 0x8a7a5a, 0x3a3020), pat: [26, 16, 0.32], pat2: [6, 5, 0.6], cs: [-2, 0], sheen: 0.08, rough: 0.6,
+    mot: { amp: 0.06, waves: 1.0, c0: 0.25, beat: 1.2, idle: 0.3 },
+    beh: { kind: 'rest', n: [1, 3], spread: 4, lift: [2.8, 4.5], speed: [0.4, 0.8], side: true }, size: [0.28, 0.45],
+  }),
+  guitarfish: fish({
+    det: 2,
+    body: { ...ST([0, 0.03, 0.08, 0.16, 0.26, 0.36, 0.46, 0.58, 0.7, 0.8, 0.86],
+      [0.006, 0.014, 0.022, 0.032, 0.04, 0.042, 0.038, 0.032, 0.025, 0.018, 0],
+      [0.004, 0.008, 0.012, 0.016, 0.02, 0.022, 0.022, 0.02, 0.016, 0.012, 0],
+      [0.03, 0.06, 0.09, 0.13, 0.15, 0.12, 0.07, 0.045, 0.03, 0.02, 0]), n: 2.0, nb: 3, thinW: 0.05, thinB: 0.25 },
+    fins: { dorsal: [{ t0: 0.5, t1: 0.57, h: 0.06, shape: 'shark', sweep: 0.6 }, { t0: 0.68, t1: 0.74, h: 0.05, shape: 'shark', sweep: 0.6 }], anal: null, pelv: null, pect: null, caudal: { shape: 'hetero', size: 0.15, tilt: 0.1 } },
+    eye: { t: 0.12, v: 0.8, r: 0.008, axis: [0.6, 1, 0.2] },
+    col: C(0xccb88e, 0xf0ead8, 0xf0e4c8, 0xbca880), pat: [3, 22, 0.18], cs: [0, 1], sheen: 0.12, rough: 0.5,
+    mot: { amp: 0.06, waves: 0.8, c0: 0.05, beat: 0.9, idle: 0.25 },
+    beh: { kind: 'rest', n: [1, 2], spread: 4, lift: [5, 8], speed: [0.5, 0.9] }, size: [1.0, 1.5],
+  }),
+  lizardfish: fish({
+    body: { depth: 0.14, width: 0.9, tm: 0.3, nose: 0.6, tail: 1.3, ped: 0.22, snout: 0.2 },
+    fins: { dorsal: [{ t0: 0.32, t1: 0.42, h: 0.07, shape: 'tri' }], anal: [{ t0: 0.66, t1: 0.74, h: 0.04 }], pelv: { t: 0.34, h: 0.08, dip: 1.0, sweep: 0.5 }, caudal: { shape: 'forked', size: 0.18 } },
+    eye: { t: 0.07, v: 0.55, r: 0.03 },
+    col: C(0xb4a482, 0xe8e0cc, 0x6a5a40, 0xa89878), pat: [15, 8, 0.4], pat2: [6, 9, 0.55], sheen: 0.2,
+    beh: { kind: 'rest', n: [1, 3], spread: 4, lift: [2.6, 3.8], speed: [0.6, 1.2] }, size: [0.22, 0.35],
+  }),
+  goatfish: fish({
+    det: 1,
+    body: { depth: 0.22, width: 0.6, tm: 0.33, nose: 0.75, tail: 1.5, snout: -0.2 },
+    fins: { dorsal: [{ t0: 0.25, t1: 0.36, h: 0.08, shape: 'tri' }, { t0: 0.5, t1: 0.6, h: 0.06 }], caudal: { shape: 'forked', size: 0.22 } },
+    extra: { barbels: { len: 0.12 } },
+    col: C(0xd8c890, 0xf4f0e2, 0xf0c020, 0xf0d040), pat: [12, 0.1, 0.08], sheen: 0.45,
+    beh: { ...SHOAL, n: [4, 12], alt: [0.05, 0.35], speed: [0.2, 0.5], spread: 4, browse: true }, size: [0.25, 0.4],
+  }),
+  nurseShark: merge(SHARK, {
+    body: { depth: 0.16, width: 1.1, nose: 0.4, tm: 0.3, ped: 0.18, nb: 3.2 },
+    fins: { dorsal: [{ t0: 0.52, t1: 0.6, h: 0.07, shape: 'round', sweep: 0.5 }, { t0: 0.66, t1: 0.72, h: 0.06, shape: 'round', sweep: 0.5 }],
+      pect: { h: 0.12, shape: 'paddle', dip: 0.6 }, caudal: { shape: 'hetero', size: 0.25, tilt: -0.25 } },
+    extra: { barbels: { len: 0.04 } },
+    col: { d: 0xa48c68, b: 0xc8b698, a: 0x7a6848 }, cs: [-0.3, 0.2], pat: [24, 0.17, 0], sheen: 0.1, rough: 0.5,
+    mot: { amp: 0.07, waves: 0.9, c0: 0.15, beat: 0.6 },
+    beh: { kind: 'rest', n: [1, 3], spread: 5, lift: [4.5, 6], speed: [0.3, 0.6] }, size: [2.0, 2.8],
+  }),
+  oceanicSquid: fish({
+    plan: 'squid', det: 1,
+    body: ST([0, 0.04, 0.12, 0.25, 0.4, 0.5, 0.54, 0.58, 0.62, 0.65],
+      [0, 0.018, 0.035, 0.045, 0.047, 0.043, 0.035, 0.04, 0.036, 0],
+      [0, 0.018, 0.035, 0.045, 0.047, 0.043, 0.035, 0.04, 0.036, 0],
+      [0, 0.018, 0.035, 0.046, 0.048, 0.045, 0.037, 0.044, 0.04, 0]),
+    squid: { fin: { t0: 0.0, t1: 0.2, h: 0.07, shape: 'rhomb', sweep: 0.3 }, eyeT: 0.58, eyeR: 0.019, armLen: 0.24, armR: 0.007, tentacles: true, tentLen: 0.36, spread: 0.2 },
+    col: C(0xa83a2a, 0xe0a090, 0x6a1a12, 0xb85040, 0, 0xd0e0ff), pat: [30, 14, 1.4], cs: [-0.3, 0.2], iris: 0.5, sheen: 0.4,
+    mot: { mode: 5, amp: 0.6, beat: 0.5, idle: 0.6 },
+    beh: { kind: 'school', n: [12, 30], speed: [1.0, 2.0], zone: 'mid', routes: { lead: 2, cross: 2, oncoming: 1 } }, size: [0.5, 0.9],
+  }),
+  glowSquid: fish({
+    plan: 'squid', det: 1,
+    body: ST([0, 0.04, 0.12, 0.25, 0.4, 0.5, 0.54, 0.58, 0.62, 0.65],
+      [0, 0.022, 0.04, 0.05, 0.05, 0.045, 0.036, 0.042, 0.038, 0],
+      [0, 0.022, 0.04, 0.05, 0.05, 0.045, 0.036, 0.042, 0.038, 0],
+      [0, 0.022, 0.04, 0.05, 0.052, 0.047, 0.038, 0.046, 0.042, 0]),
+    squid: { fin: { t0: 0.02, t1: 0.3, h: 0.08, shape: 'round', sweep: 0.2 }, eyeT: 0.58, eyeR: 0.024, armLen: 0.26, armR: 0.008, spread: 0.35, glowTips: true },
+    col: C(0x5a1828, 0x8a3048, 0x7ad8ff, 0x6a2030, 0, 0x5ac8ff), pat: [13, 16, 0.02], pat2: [30, 10, 1], cs: [-0.4, 0.2], glowMode: 1, glow: 1.4, iris: 1.0, sheen: 0.3,
+    mot: { mode: 5, amp: 0.6, beat: 0.5, idle: 0.5 },
+    beh: { kind: 'school', n: [5, 14], speed: [0.4, 1.0], zone: 'mid', routes: { lead: 2, hold: 2, cross: 1 } }, size: [0.35, 0.6],
+  }),
+});
+for (const k of ['flounder', 'guitarfish', 'lizardfish', 'goatfish', 'nurseShark', 'oceanicSquid', 'glowSquid']) { SPECIES[k].key = k; SPECIES[k].name = k; }
 
 // ---------- derived variants ----------
 const S = SPECIES;
