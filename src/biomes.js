@@ -143,7 +143,8 @@ const NO_CEIL = 60; // metres above the surface: "no ceiling" for open-water bio
 const TH = 90; // half-width of the cross-fade between biomes (m)
 
 export class BiomeSequence {
-  constructor(seed, startKey = 'reef') {
+  constructor(seed, startKey = 'reef', startS = 0) {
+    this.startS = startS;
     this.rng = mulberry32(seed ^ 0x9e3779b9);
     this.seed = seed;
     this.segs = [];
@@ -151,7 +152,7 @@ export class BiomeSequence {
     this._push(BIOMES[startKey] ? startKey : 'reef');
   }
   _push(key) {
-    const start = this.segs.length ? this.segs[this.segs.length - 1].end : -200;
+    const start = this.segs.length ? this.segs[this.segs.length - 1].end : this.startS - 200;
     const b = BIOMES[key];
     const len = this.rng.range(b.len[0], b.len[1]);
     this.segs.push({ key, start, end: start + len, id: this.segs.length, seed: (this.rng() * 1e9) | 0 });

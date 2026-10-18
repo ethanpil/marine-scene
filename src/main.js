@@ -1,13 +1,13 @@
 // Endless Ocean — entry point: renderer, floating origin, camera path, biome blending, frame loop.
 import * as THREE from 'three';
 import { U, Caustics, makeNoiseTexture } from './water.js';
-import { BIOMES, BiomeSequence, WorldShape } from './biomes.js';
+import { BIOMES, BIOME_KEYS, BiomeSequence, WorldShape } from './biomes.js';
 import { Terrain } from './terrain.js';
 import { Background, Surface, MarineSnow } from './env.js';
 import { Post } from './post.js';
 import { registerProps } from './props/index.js';
 import { Creatures } from './creatures/index.js';
-import { noise1, smoothstep } from './noise.js';
+import { noise1, smoothstep, mulberry32 } from './noise.js';
 import { obstacles } from './obstacles.js';
 import { Labels } from './labels.js';
 
@@ -59,7 +59,12 @@ if (SHADOWS) {
   sun.shadow.intensity = 0.8;
 }
 
-const seq = new BiomeSequence(SEED, qs.get('biome') || 'reef');
+// Every load starts somewhere new: a seed-derived zone and a point far along the endless path
+// (path/terrain noise is a function of distance, so this randomises their shape too).
+const startRng = mulberry32(SEED ^ 0x51ed270b);
+const START_KEY = qs.get('biome') || BIOME_KEYS[Math.floor(startRng() * BIOME_KEYS.length)];
+const START_S = Math.floor(startRng() * 1e6);
+const seq = new BiomeSequence(SEED, START_KEY, START_S);
 const shape = new WorldShape(seq);
 const terrain = new Terrain(world, shape, seq);
 terrain.shadows = SHADOWS;
@@ -97,7 +102,7 @@ function rebase(globalZ) {
 }
 
 // ---------- camera path ----------
-let s = qs.has('start') ? parseFloat(qs.get('start')) : 0;
+let s = START_S + (qs.has('start') ? parseFloat(qs.get('start')) : 0);
 const camState = { s: 0, x: 0, y: 0, z: 0, forward: new THREE.Vector3(), camera, Oz: 0 };
 const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 function placeCamera(time) {
