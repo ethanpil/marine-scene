@@ -8,9 +8,19 @@
   <style>
     html, body { margin: 0; height: 100%; background: #021826; overflow: hidden; cursor: none; }
     canvas { display: block; width: 100vw; height: 100vh; }
-    #loader { position: fixed; inset: 0; display: grid; place-items: center; color: #9fd8ea;
-      font: 300 15px/1.4 system-ui, sans-serif; letter-spacing: .3em; text-transform: uppercase;
-      background: radial-gradient(ellipse at 50% 20%, #0b4f6e, #021826 70%); transition: opacity 1.5s; }
+    #loader { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; color: #cfeef8;
+      background: radial-gradient(ellipse at 50% 12%, #0e5f82 0%, #06324a 38%, #021826 75%); transition: opacity 2.5s ease; z-index: 5; }
+    #loader h1 { margin: 0; font: 200 clamp(28px, 5vw, 64px)/1 Georgia, 'Times New Roman', serif; letter-spacing: .42em;
+      text-transform: uppercase; padding-left: .42em; text-shadow: 0 4px 30px rgba(0, 30, 60, .7); }
+    #loader p { margin: 1.4em 0 0; font: 300 13px/1.6 system-ui, sans-serif; letter-spacing: .32em; text-transform: uppercase; opacity: .7; }
+    #loader .rays { position: absolute; inset: 0; pointer-events: none; opacity: .35;
+      background: repeating-linear-gradient(105deg, transparent 0 60px, rgba(180, 235, 255, .07) 60px 90px, transparent 90px 170px);
+      mask-image: linear-gradient(to bottom, #000, transparent 70%); -webkit-mask-image: linear-gradient(to bottom, #000, transparent 70%);
+      animation: drift 9s ease-in-out infinite alternate; }
+    @keyframes drift { from { transform: translateX(-30px); } to { transform: translateX(30px); } }
+    #note { position: fixed; left: 50%; bottom: 4.5vh; transform: translateX(-50%); color: #dff4fb; opacity: 0;
+      font: italic 300 clamp(12px, 1.25vw, 16px)/1.3 Georgia, serif; letter-spacing: .08em; transition: opacity 2.5s;
+      text-shadow: 0 2px 12px rgba(0, 20, 40, .9); pointer-events: none; white-space: nowrap; }
     #caption { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); color: #e6f6fb;
       font: 200 clamp(18px, 2.6vw, 34px)/1 Georgia, 'Times New Roman', serif; letter-spacing: .35em;
       text-transform: uppercase; opacity: 0; transition: opacity 3s; pointer-events: none;
@@ -24,6 +34,9 @@
       border: 1px solid rgba(255, 255, 255, .85); }
     #labels .txt { position: absolute; left: 7px; top: -18px; padding: 2px 6px; border-radius: 3px;
       background: rgba(2, 30, 48, .45); border-left: 1px solid rgba(255, 255, 255, .6); }
+    #labels .fact { position: absolute; left: 7px; top: 6px; max-width: 280px; white-space: normal; display: none;
+      font: italic 400 11px/1.35 Georgia, serif; color: #d9f2fa; padding: 3px 6px; border-radius: 3px;
+      background: rgba(2, 30, 48, .5); border-left: 1px solid rgba(255, 255, 255, .35); }
     #help { position: fixed; right: 14px; bottom: 12px; color: #cfeaf3; font: 12px system-ui, sans-serif; opacity: 0; transition: opacity 1s; }
   </style>
   <script type="importmap">
@@ -34,10 +47,11 @@
   </script>
 </head>
 <body>
-  <div id="loader">Descending&hellip;</div>
+  <div id="loader"><div class="rays"></div><div><h1>Endless Ocean</h1><p>descending&hellip;</p></div></div>
+  <div id="note"></div>
   <div id="caption"></div>
   <div id="stats"></div>
-  <div id="help">H captions &middot; I names &middot; F fullscreen &middot; S stats &middot; Space pause &middot; &larr;/&rarr; speed &middot; N next zone</div>
+  <div id="help">H captions &middot; I names &middot; T time &middot; W weather &middot; F fullscreen &middot; S stats &middot; Space pause &middot; &larr;/&rarr; speed &middot; N next zone</div>
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

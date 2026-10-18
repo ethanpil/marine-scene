@@ -15,8 +15,8 @@ function rt(w, h, opts = {}) {
 export class Post {
   constructor(renderer, scene, camera, opts = {}) {
     this.renderer = renderer; this.scene = scene; this.camera = camera;
-    this.opts = Object.assign({ msaa: 4, shaftDiv: 2, shaftSteps: 24 }, opts);
-    this.params = { shafts: 1, depth: 10, exposure: 1, softStart: 12, softEnd: 70 };
+    this.opts = Object.assign({ msaa: 4, shaftDiv: 2, shaftSteps: 24, ao: false, fxaa: false }, opts);
+    this.params = { shafts: 1, depth: 10, exposure: 1, softStart: 12, softEnd: 70, focus: 12, aperture: 1.8, night: 0 };
     this.quadScene = new THREE.Scene();
     this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
@@ -134,19 +134,75 @@ export class Post {
         }`,
       depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, transparent: true,
     });
+    // Screen-space ambient occlusion (high tier): half-res, 12 hemisphere samples, view-space radius.
+    const kernel = [];
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 * 2.618, z = 0.15 + 0.85 * ((i * 7) % 12) / 12, r = Math.sqrt(1 - z * z);
+      const sc = 0.25 + 0.75 * ((i + 0.5) / 12) ** 2;
+      kernel.push(new THREE.Vector3(Math.cos(a) * r * sc, Math.sin(a) * r * sc, z * sc));
+    }
+    this.aoMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDepth: { value: null }, uProj: { value: new THREE.Matrix4() }, uProjInv: { value: new THREE.Matrix4() },
+        uKernel: { value: kernel }, uRadius: { value: 0.9 }, uFrame: { value: 0 },
+      },
+      vertexShader: QUAD_VERT,
+      fragmentShader: /* glsl */`
+        varying vec2 vUv;
+        uniform sampler2D tDepth;
+        uniform mat4 uProj, uProjInv;
+        uniform vec3 uKernel[12];
+        uniform float uRadius, uFrame;
+        vec3 viewPos(vec2 uv) {
+          float z = texture2D(tDepth, uv).x;
+          vec4 p = uProjInv * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+          return p.xyz / p.w;
+        }
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + uFrame * 0.618) * 43758.5453); }
+        void main() {
+          float z0 = texture2D(tDepth, vUv).x;
+          if (z0 >= 0.99999) { gl_FragColor = vec4(1.0); return; }
+          vec3 P = viewPos(vUv);
+          if (-P.z > 45.0) { gl_FragColor = vec4(1.0); return; }
+          vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+          if (dot(N, P) > 0.0) N = -N;
+          float a = hash(gl_FragCoord.xy) * 6.2831853;
+          vec3 rv = vec3(cos(a), sin(a), 0.0);
+          vec3 T = normalize(rv - N * dot(rv, N)), B = cross(N, T);
+          float occ = 0.0;
+          for (int i = 0; i < 12; i++) {
+            vec3 k = uKernel[i];
+            vec3 sp = P + (T * k.x + B * k.y + N * k.z) * uRadius;
+            vec4 q = uProj * vec4(sp, 1.0);
+            vec2 suv = q.xy / q.w * 0.5 + 0.5;
+            float sz = viewPos(suv).z;
+            float range = smoothstep(0.0, 1.0, uRadius / max(1e-3, abs(P.z - sz)));
+            occ += (sz >= sp.z + 0.03 ? 1.0 : 0.0) * range;
+          }
+          float ao = 1.0 - occ / 12.0;
+          gl_FragColor = vec4(vec3(pow(clamp(ao, 0.0, 1.0), 1.4)), 1.0);
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+
     this.compMat = new THREE.ShaderMaterial({
+      defines: Object.assign({}, this.opts.fxaa ? { FXAA: 1 } : {}, this.opts.ao ? { AO: 1 } : {}),
       uniforms: {
         tScene: { value: null }, tShafts: { value: null }, tBloom: { value: null }, tSoft: { value: null }, tDepth: { value: null },
         uNear: { value: 0.1 }, uFar: { value: 1400 }, uSoft: { value: new THREE.Vector2(12, 70) },
+        tSoftA: { value: null }, tAO: { value: null }, uFocus: { value: 12 }, uAperture: { value: 1.8 }, uNight: { value: 0 },
+        uTexel: { value: new THREE.Vector2() }, uAOTexel: { value: new THREE.Vector2() }, uSigma: U.uSigma,
         uShaftTexel: { value: new THREE.Vector2() }, uExposure: { value: 1 }, uTime: { value: 0 },
         uWaterDeep: U.uWaterDeep, uAspect: { value: 1 },
       },
       vertexShader: QUAD_VERT,
       fragmentShader: /* glsl */`
         varying vec2 vUv;
-        uniform sampler2D tScene, tShafts, tBloom, tSoft, tDepth;
-        uniform float uNear, uFar;
-        uniform vec2 uSoft;
+        uniform sampler2D tScene, tShafts, tBloom, tSoft, tDepth, tSoftA, tAO;
+        uniform float uNear, uFar, uFocus, uAperture, uNight;
+        uniform vec2 uSoft, uTexel, uAOTexel;
+        uniform vec3 uSigma;
+        float luma(vec3 c) { float l = dot(c, vec3(0.299, 0.587, 0.114)); return l / (1.0 + l); }
         uniform vec2 uShaftTexel;
         uniform float uExposure, uTime, uAspect;
         uniform vec3 uWaterDeep;
@@ -161,17 +217,54 @@ export class Post {
           vec2 cc = uv - 0.5;
           float r2 = dot(cc * vec2(uAspect, 1.0), cc * vec2(uAspect, 1.0));
           // subtle radial chromatic aberration (housing port)
-          vec2 ca = cc * r2 * 0.012;
           vec3 col;
+#ifdef FXAA
+          // FXAA-lite on the HDR scene (low tier has no MSAA): blend along the local edge direction
+          {
+            vec3 rgbM = texture2D(tScene, uv).rgb;
+            float lM = luma(rgbM);
+            float lN = luma(texture2D(tScene, uv + vec2(0.0, uTexel.y)).rgb), lS = luma(texture2D(tScene, uv - vec2(0.0, uTexel.y)).rgb);
+            float lE = luma(texture2D(tScene, uv + vec2(uTexel.x, 0.0)).rgb), lW = luma(texture2D(tScene, uv - vec2(uTexel.x, 0.0)).rgb);
+            float lMin = min(lM, min(min(lN, lS), min(lE, lW))), lMax = max(lM, max(max(lN, lS), max(lE, lW)));
+            col = rgbM;
+            if (lMax - lMin > max(0.03, lMax * 0.12)) {
+              vec2 dir = vec2(-(lN - lS), lE - lW);
+              float red = max((lN + lS + lE + lW) * 0.03125, 1.0 / 128.0);
+              dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + red), -6.0, 6.0) * uTexel;
+              vec3 A = 0.5 * (texture2D(tScene, uv - dir / 6.0).rgb + texture2D(tScene, uv + dir / 6.0).rgb);
+              vec3 Bc = A * 0.5 + 0.25 * (texture2D(tScene, uv - dir * 0.5).rgb + texture2D(tScene, uv + dir * 0.5).rgb);
+              float lB = luma(Bc);
+              col = (lB < lMin || lB > lMax) ? A : Bc;
+            }
+          }
+#else
+          vec2 ca = cc * r2 * 0.012;
           col.r = texture2D(tScene, uv - ca).r;
           col.g = texture2D(tScene, uv).g;
           col.b = texture2D(tScene, uv + ca).b;
-          // turbidity softening: distant detail dissolves into the water
+#endif
+          float zd = texture2D(tDepth, uv).x * 2.0 - 1.0;
+          float vz = 2.0 * uNear * uFar / (uFar + uNear - zd * (uFar - uNear));
+#ifdef AO
           {
-            float zd = texture2D(tDepth, uv).x * 2.0 - 1.0;
-            float vz = 2.0 * uNear * uFar / (uFar + uNear - zd * (uFar - uNear));
-            float k = smoothstep(uSoft.x, uSoft.y, vz) * 0.6;
-            col = mix(col, texture2D(tSoft, uv).rgb, k);
+            float ao = texture2D(tAO, uv).r * 0.4;
+            ao += texture2D(tAO, uv + uAOTexel * vec2(1.0, 0.5)).r * 0.15;
+            ao += texture2D(tAO, uv - uAOTexel * vec2(1.0, 0.5)).r * 0.15;
+            ao += texture2D(tAO, uv + uAOTexel * vec2(-0.5, 1.0)).r * 0.15;
+            ao += texture2D(tAO, uv - uAOTexel * vec2(-0.5, 1.0)).r * 0.15;
+            // occlusion darkens surfaces, not the water haze in front of them
+            float T = exp(-dot(uSigma, vec3(0.3333)) * vz);
+            col *= mix(1.0, ao, 0.85 * T);
+          }
+#endif
+          // focus pull (thin-lens circle of confusion) + turbidity softening of distant detail
+          {
+            float coc = clamp(abs(1.0 / uFocus - 1.0 / max(vz, 0.05)) * uAperture, 0.0, 1.0);
+            float kd = smoothstep(0.1, 0.55, coc);
+            float kt = smoothstep(uSoft.x, uSoft.y, vz) * 0.6;
+            vec3 blurA = texture2D(tSoftA, uv).rgb, blurB = texture2D(tSoft, uv).rgb;
+            vec3 blur = mix(blurA, blurB, smoothstep(0.45, 1.0, max(coc, kt)));
+            col = mix(col, blur, max(kd, kt));
           }
           vec3 sh = texture2D(tShafts, uv).rgb * 0.2;
           sh += texture2D(tShafts, uv + uShaftTexel * vec2(2.5, 1.0)).rgb * 0.1;
@@ -185,6 +278,8 @@ export class Post {
           col += sh;
           col += texture2D(tBloom, uv).rgb * 0.55;
           col *= uExposure;
+          // night: scotopic vision — slightly desaturated and blue
+          col = mix(col, vec3(dot(col, vec3(0.25, 0.55, 0.2))) * vec3(0.78, 0.95, 1.22), 0.32 * uNight);
           // vignette
           col *= mix(1.0, smoothstep(1.05, 0.15, r2 * 1.6), 0.75);
           col = aces(col * 1.05);
@@ -193,7 +288,7 @@ export class Post {
           col += uWaterDeep * 0.025;
           col = toSRGB(col);
           float n = hash(uv * 1000.0 + fract(uTime * 13.37) * 100.0) - 0.5;
-          col += n * (0.012 + 0.014 * (1.0 - dot(col, vec3(0.333))));
+          col += n * (0.012 + 0.014 * (1.0 - dot(col, vec3(0.333)))) * (1.0 + 0.8 * uNight);
           gl_FragColor = vec4(col, 1.0);
         }`,
       depthTest: false, depthWrite: false,
@@ -207,6 +302,7 @@ export class Post {
     const w = Math.max(2, size.x | 0), h = Math.max(2, size.y | 0);
     if (this.sceneRT) {
       this.sceneRT.dispose(); this.shaftRT.dispose(); this.shaftRT2.dispose(); this.softA.dispose(); this.softB.dispose();
+      if (this.aoRT) this.aoRT.dispose();
       for (const t of this.mips) t.dispose();
     }
     this.sceneRT = rt(w, h, { depthBuffer: true, samples: this.opts.msaa });
@@ -217,6 +313,7 @@ export class Post {
     this.histValid = false;
     this.softA = rt(Math.ceil(w / 2), Math.ceil(h / 2));
     this.softB = rt(Math.ceil(w / 4), Math.ceil(h / 4));
+    this.aoRT = this.opts.ao ? rt(Math.ceil(w / 2), Math.ceil(h / 2), { type: THREE.UnsignedByteType }) : null;
     this.mips = [];
     let mw = w, mh = h;
     for (let i = 0; i < 6; i++) { mw = Math.max(1, Math.ceil(mw / 2)); mh = Math.max(1, Math.ceil(mh / 2)); this.mips.push(rt(mw, mh)); }
@@ -283,8 +380,24 @@ export class Post {
     this.downMat.uniforms.uTexel.value.set(1 / this.softA.width, 1 / this.softA.height);
     this._pass(this.downMat, this.softB);
 
+    if (this.aoRT) {
+      const au = this.aoMat.uniforms;
+      au.tDepth.value = this.sceneRT.depthTexture;
+      au.uProj.value.copy(cam.projectionMatrix);
+      au.uProjInv.value.copy(cam.projectionMatrixInverse);
+      au.uFrame.value = this.frame % 64;
+      this._pass(this.aoMat, this.aoRT);
+    }
+
     const cu = this.compMat.uniforms;
     cu.tSoft.value = this.softB.texture;
+    cu.tSoftA.value = this.softA.texture;
+    cu.tAO.value = this.aoRT ? this.aoRT.texture : null;
+    cu.uFocus.value = Math.max(0.5, this.params.focus);
+    cu.uAperture.value = this.params.aperture;
+    cu.uNight.value = this.params.night;
+    cu.uTexel.value.set(1 / this.w, 1 / this.h);
+    if (this.aoRT) cu.uAOTexel.value.set(1 / this.aoRT.width, 1 / this.aoRT.height);
     cu.tDepth.value = this.sceneRT.depthTexture;
     cu.uNear.value = cam.near; cu.uFar.value = cam.far;
     cu.uSoft.value.set(this.params.softStart, this.params.softEnd);

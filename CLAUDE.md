@@ -33,7 +33,16 @@ Static site, no build step. The three.js version is pinned in the `index.html` i
 - **Distance softening:** the composite pass mixes in a quarter-res blurred scene by view depth (turbidity).
 - **Dev server:** `python -m http.server` let the browser serve stale ES modules, so use a server that sends `Cache-Control: no-store`.
 
+- **Exact terrain sampling:** `shape.floorAt` / `ceilingAt` sample the rendered chunk meshes (same triangle split as the index buffer). This is O(1), allocation-free and exact, so anything placed with it cannot float. `floorExact` / `ceilingExact` are the analytic fallbacks, used before a chunk is built.
+- **Per-segment variety:** `seq.weights(s)` entries carry the segment `g`. Biome `floor` / `ceil` receive `(x, s, ad, g, dx)`, and `sv(g, k)` gives deterministic per-segment randoms for shape, water clarity and tint.
+- **LOD:** prop meshes tagged `userData.lod = 'near' | 'mid'` are hidden beyond per-tier distances (`LOD` in terrain.js). Untagged meshes are only fog-culled.
+- **POIs:** `ctx.addPOI(type, x, y, s, r, data)` registers set pieces that creatures and the camera director use (`terrain.queryPOIs`).
+- **Conditions** (`conditions.js`): a day/night cycle and weather produce multipliers that main.js applies. `U.uNight` and `U.uRain` are shared with props and creatures.
+- **Camera director** (`camera.js`): critically damped springs for altitude, gaze, focus and speed. Subjects come from `creatures.subjects(out)` and POIs; cooldowns stop it staring at one thing.
+- **Frame cap:** 60 fps by default (`?fps=`). The adaptive-resolution thresholds are relative to the cap.
+
 ## Debugging
+- `__ocean.advance(seconds)` steps the simulation without rAF (the preview pane throttles rAF). `__ocean.bench(w, h, n)` measures GPU ms per frame at a fixed size. Benchmarks are unreliable while other tabs render the app.
 - `window.__ocean` exposes the scene, camera, terrain, shape, seq, creatures, post and U.
 - `window.__props` holds per-populator timings and triangle counts.
 - `?cr=<species>&crstats=1` forces a creature species and logs creature stats.

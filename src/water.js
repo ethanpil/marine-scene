@@ -24,7 +24,10 @@ export const U = {
   uCaustics: { value: null },
   uNoiseTex: { value: null },
   uGlow: { value: 0 },
-  uLamp: { value: 0 },          // camera-mounted ROV lamps (deep / caves)
+  uLamp: { value: 0 },          // camera-mounted ROV lamps (deep / caves / night)
+  uNight: { value: 0 },         // 0 = day, 1 = full night (moonlight); creatures/props may react
+  uRain: { value: 0 },          // 0..1 rain falling on the surface (rings seen from below)
+  uSurge: { value: 0 },         // 0..1 heavy swell (rougher surface, more sway)
   uFloorCol: { value: new THREE.Color(0.3, 0.3, 0.25) }, // lit floor colour, for surface reflections          // 0..1 bioluminescence emphasis (deep / night)
   uCamPos: { value: new THREE.Vector3() },
   // Sky-visibility map (caves / ice): R = how much sunlight reaches this xz column.
@@ -48,6 +51,9 @@ uniform float uCausticStr;
 uniform float uAmbientScale;
 uniform float uGlow;
 uniform float uLamp;
+uniform float uNight;
+uniform float uRain;
+uniform float uSurge;
 uniform vec3 uFloorCol;
 uniform sampler2D uCaustics;
 uniform sampler2D uNoiseTex;

@@ -19,7 +19,9 @@ Then open http://localhost:8000.
 | Key | Action |
 | --- | --- |
 | `H` | toggle zone captions |
-| `I` | show names of creatures and objects on screen |
+| `I` | show names of creatures and objects on screen (with a fun fact for whatever the camera is watching) |
+| `T` | skip ahead in time of day |
+| `W` | change the weather |
 | `F` | fullscreen |
 | `S` | stats (fps, draw calls, triangles, biome weights) |
 | `Space` | pause |
@@ -31,7 +33,11 @@ Then open http://localhost:8000.
 | Param | Meaning |
 | --- | --- |
 | `seed=<int>` | fixed world seed (default: random each load) |
-| `biome=<key>` | starting zone: `reef kelp seagrass sandflat pelagic cave wreck ruins vents tidepool abyss polar` |
+| `biome=<key>` | starting zone: `reef softcoral wall kelp seagrass mangrove sandflat pelagic cave wreck ruins vents deepplain tidepool abyss polar` (default: random) |
+| `time=<phase>` | starting time of day: `dawn morning day afternoon dusk night` (default: random) |
+| `weather=<kind>` | lock the weather: `clear crystal overcast rain plankton surge` |
+| `day=<minutes>` | length of a full day/night cycle (default 60) |
+| `fps=<n>` | frame-rate cap (default 60; `0` = uncapped) |
 | `speed=<m/s>` | cruise speed (default 3.2) |
 | `quality=low\|high` | force a quality tier (default: chosen from the GPU) |
 | `captions=0` | hide zone captions |
@@ -40,6 +46,8 @@ Then open http://localhost:8000.
 ## How it works
 
 - **Path first, world second.** A smooth camera path is defined first. Terrain, ceilings and props are then generated around it, so the flight tube is always clear.
+- **A documentary camera.** A director picks the most interesting creature or set piece ahead, turns to watch it, slows down for highlights, varies altitude within safe headroom and pulls focus (depth of field).
+- **Time and weather.** A 60-minute day with golden dusk and a moonlit night dive (lamps on, bioluminescence, coral spawning on some nights), plus crystal-clear, overcast, rain, plankton-bloom and surge weather.
 - **Biomes.** A seeded endless sequence of zones, each 450–1100 m long, with cross-fades of about 180 m. Each zone defines water optics, camera depth, terrain shape, props and encounter tables.
 - **Water look.** Every material is patched by `applyWater`, which adds:
   - per-channel absorption, so reds die first

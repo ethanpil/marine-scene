@@ -11,23 +11,41 @@ const DX = 1.5;                   // lateral grid spacing (globally aligned)
 const HALF_W = 165;               // half width of a chunk around the path
 const NZ = 43;                    // rows per chunk (spacing 64/42)
 const AHEAD = 330, BEHIND = 40;
+const NO_CEIL = 60;
+// Distance (m ahead of the camera) up to which tagged prop LOD classes are drawn, per GPU tier.
+const LOD = { high: { near: 70, mid: 150 }, low: { near: 45, mid: 100 } };
+// Sand-ripple strength per biome (1 = default)
+const RIPPLE = { pelagic: 0.2, abyss: 0.2, vents: 0.2, tidepool: 0.2, sandflat: 1.6, mangrove: 0.25, deepplain: 0.15, wall: 0.6 };
 
 function floorMaterial() {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
   return applyWater(m, {
     key: 'floor',
     vertexHead: 'attribute vec2 aDetail; varying vec2 vDetail;',
-    fragmentHead: 'varying vec2 vDetail;',
+    fragmentHead: 'varying vec2 vDetail; float vRockH; float vRockMask;',
     patch(sh) {
       sh.vertexShader = sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\nvDetail = aDetail;');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <color_fragment>', `#include <color_fragment>
           {
+            // geometric world normal: sand on the flats, triplanar rock (no stretching) on slopes and walls
+            vec3 wNg = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
+            float steep = 1.0 - abs(wNg.y);
+            vec3 bw = pow(abs(wNg), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
+            vec4 tri = texture2D(uNoiseTex, vWPos.zy / 4.0) * bw.x + texture2D(uNoiseTex, vWPos.xz / 4.0) * bw.y
+                     + texture2D(uNoiseTex, vWPos.xy / 4.0) * bw.z;
             vec4 n1 = texture2D(uNoiseTex, vWPos.xz / 8.0);
             vec4 n2 = texture2D(uNoiseTex, vWPos.xz / 32.0);
             vec4 n3 = texture2D(uNoiseTex, vWPos.xz / 2.0);
-            diffuseColor.rgb *= 0.72 + 0.42 * (n1.r * 0.45 + n2.g * 0.35 + n3.b * 0.2);
-            diffuseColor.rgb *= mix(1.0, 0.8 + 0.4 * n3.a, vDetail.y);
+            float rock = clamp(max(vDetail.y, smoothstep(0.35, 0.7, steep)), 0.0, 1.0);
+            float sandDet = 0.72 + 0.42 * (n1.r * 0.45 + n2.g * 0.35 + n3.b * 0.2);
+            float rockDet = 0.66 + 0.52 * (tri.r * 0.6 + tri.a * 0.4);
+            // sedimentary strata on cliffs and walls
+            float strata = 0.84 + 0.16 * sin(vWPos.y * 2.6 + tri.g * 6.0) * smoothstep(0.45, 0.85, steep);
+            diffuseColor.rgb *= mix(sandDet, rockDet * strata, rock);
+            // large patches of darker silt and paler sand
+            diffuseColor.rgb *= 0.88 + 0.24 * texture2D(uNoiseTex, vWPos.xz / 128.0).g;
+            vRockH = tri.a; vRockMask = rock;
           }`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
           {
@@ -40,8 +58,15 @@ function floorMaterial() {
             float h0 = texture2D(uNoiseTex, q / 3.0).a;
             float hx = texture2D(uNoiseTex, (q + vec2(e, 0.0)) / 3.0).a;
             float hz = texture2D(uNoiseTex, (q + vec2(0.0, e)) / 3.0).a;
-            g += vec3(hx - h0, 0.0, hz - h0) / e * (0.25 + 0.9 * vDetail.y);
+            g += vec3(hx - h0, 0.0, hz - h0) / e * (0.25 + 0.9 * vDetail.y) * (1.0 - vRockMask * 0.7);
             normal = normalize(normal - mat3(viewMatrix) * g);
+            // screen-space bump from the triplanar rock height (works at any slope)
+            float H = vRockH * 0.22 * vRockMask;
+            vec2 dH = vec2(dFdx(H), dFdy(H));
+            vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
+            vec3 r1 = cross(sy, normal), r2 = cross(normal, sx);
+            float det = dot(sx, r1);
+            normal = normalize(abs(det) * normal - sign(det) * (dH.x * r1 + dH.y * r2));
           }`);
     },
   });
@@ -70,14 +95,35 @@ function ceilingMaterial() {
 }
 
 export class Terrain {
-  constructor(world, shape, seq) {
+  constructor(world, shape, seq, tier = 'high') {
     this.world = world; this.shape = shape; this.seq = seq;
+    this.tier = tier;
+    this.lod = LOD[tier] || LOD.high;
     this.chunks = new Map();     // index -> chunk
     this.queue = [];             // pending build generators
     this.populators = [];        // (ctx) => {object, dispose} | null
     this.floorMat = floorMaterial();
     this.ceilMat = ceilingMaterial();
     this.sky = new SkyMap(shape, seq);
+    // Exact samplers over built meshes: O(1), allocation-free, identical to what is rendered.
+    shape.gridFloor = (x, s) => this._sample(x, s, false);
+    shape.gridCeil = (x, s) => this._sample(x, s, true);
+  }
+
+  // Height of the rendered floor (or ceiling) mesh at global (x, s); undefined if not built.
+  _sample(x, s, ceil) {
+    const c = this.chunks.get(Math.floor(s / CHUNK));
+    if (!c || !c.grid) return undefined;
+    const G = c.grid;
+    const u = (x - G.x0) / DX, i = Math.floor(u);
+    if (i < 0 || i >= G.NX - 1) return undefined;
+    if (ceil && !G.anyCeil) return NO_CEIL;
+    const v = (s - c.s0) / (CHUNK / (NZ - 1)), j = Math.min(NZ - 2, Math.floor(v));
+    const fu = u - i, fv = v - j, W = G.W, h = ceil ? G.hc : G.hf;
+    const a = (j + 1) * W + (i + 1);
+    const ha = h[a], hb = h[a + 1], hc = h[a + W], hd = h[a + W + 1];
+    // same triangle split as the index buffer: (a, b, c) and (b, d, c)
+    return fu + fv <= 1 ? ha + (hb - ha) * fu + (hc - ha) * fv : hd + (hc - hd) * (1 - fu) + (hb - hd) * (1 - fv);
   }
 
   // Row data depends only on s; cache per build.
@@ -102,20 +148,21 @@ export class Terrain {
       const r = rows[j];
       for (let i = 0; i < W; i++) {
         const x = x0 + (i - 1) * DX;
-        const ad = Math.abs(x - r.px);
+        const dx = x - r.px, ad = Math.abs(dx);
         let h = 0;
-        for (const e of r.ws) { const b = BIOMES[e.key]; h += (r.py - b.clearance + b.floor(x, r.s, ad)) * e.w; }
+        for (const e of r.ws) { const b = BIOMES[e.key]; h += (r.py - b.clearance + b.floor(x, r.s, ad, e.g, dx)) * e.w; }
         hf[j * W + i] = Math.min(h, r.py - 2.2 + Math.max(0, ad - 4) * 2.5);
         if (r.hasCeil) {
           let c = 0;
-          for (const e of r.ws) { const b = BIOMES[e.key]; c += (b.ceil ? r.py + b.ceil(x, r.s, ad) : 60) * e.w; }
+          for (const e of r.ws) { const b = BIOMES[e.key]; c += (b.ceil ? r.py + b.ceil(x, r.s, ad, e.g, dx) : NO_CEIL) * e.w; }
           c = Math.max(c, r.py + 2.4 - Math.max(0, ad - 4) * 2.5);
           hc[j * W + i] = c; anyCeil = true; if (c < minCeil) minCeil = c;
-        }
+        } else hc[j * W + i] = NO_CEIL;
       }
       if ((j & 7) === 7) yield;
     }
-    const chunk = { idx, s0, group: new THREE.Group(), floor: null, ceil: null, props: [], obstacles: [], labels: [] };
+    const chunk = { idx, s0, group: new THREE.Group(), floor: null, ceil: null, props: [], obstacles: [], labels: [], pois: [],
+      lodNear: [], lodMid: [], grid: { hf, hc, x0, NX, W, anyCeil } };
     chunk.group.position.set(0, 0, -s0);
     chunk.floor = new THREE.Mesh(this._gridGeometry(hf, rows, x0, NX, false), this.floorMat);
     chunk.floor.receiveShadow = !!this.shadows;
@@ -137,6 +184,11 @@ export class Terrain {
         const r = pop(ctx);
         if (r && r.object) {
           if (this.shadows) r.object.traverse((o) => { if (o.isMesh && !o.material.transparent) { o.castShadow = true; o.receiveShadow = true; } });
+          r.object.traverse((o) => {
+            if (o.userData.lod === 'near') chunk.lodNear.push(o);
+            else if (o.userData.lod === 'mid') chunk.lodMid.push(o);
+          });
+          chunk.lodNearVis = chunk.lodMidVis = undefined; // re-apply LOD visibility next update
           chunk.group.add(r.object); chunk.props.push(r);
         }
       } catch (e) { console.error('populator failed', e); }
@@ -161,7 +213,11 @@ export class Terrain {
       // Pass a = b for a sphere. Removed automatically when the chunk unloads.
       addObstacle: (ax, ay, as, bx, by, bs, r) => { chunk.obstacles.push(obstacles.add({ ax, ay, as, bx, by, bs, r })); },
       // Name shown by the "i" overlay, anchored at GLOBAL (x, y, s).
-      addLabel: (name, x, y, s) => { chunk.labels.push({ name, x, y, z: -s }); },
+      addLabel: (name, x, y, s, fact) => { chunk.labels.push({ name, x, y, z: -s, fact }); },
+      // Point of interest (set piece) that creatures and the camera director can use. GLOBAL (x, y, s);
+      // r = rough radius (m); data = optional extra info. Removed when the chunk unloads.
+      addPOI: (type, x, y, s, r = 5, data = null) => { chunk.pois.push({ type, x, y, s, r, data }); },
+      tier: this.tier,
     };
   }
 
@@ -207,11 +263,14 @@ export class Terrain {
           let rr = b.rock[0], rg = b.rock[1], rb = b.rock[2];
           if (e.key === 'tidepool') { const p = smoothstep(0.1, 0.5, nn); rr += 0.25 * p; rg += 0.05 * p; rb += 0.12 * p; }
           if (e.key === 'vents') { const p = smoothstep(0.35, 0.7, fbm2(x / 11, r.s / 11, 2, 9)); rr += 0.35 * p; rg += 0.18 * p; rb += 0.02 * p; sr += 0.2 * p; sg += 0.1 * p; }
-          if (e.key === 'kelp' || e.key === 'reef') { const p = smoothstep(0.2, 0.6, nn); rr -= 0.06 * p; rg += 0.04 * p; }
+          if (e.key === 'kelp' || e.key === 'reef' || e.key === 'softcoral') { const p = smoothstep(0.2, 0.6, nn); rr -= 0.06 * p; rg += 0.04 * p; }
+          if (e.key === 'wall') { const p = smoothstep(0.1, 0.55, fbm2(x / 5, r.s / 5, 2, 17)); rr += 0.22 * p; rg += 0.06 * p; rb += 0.08 * p; }
+          if (e.key === 'mangrove') { const p = smoothstep(0.2, 0.7, fbm2(x / 3, r.s / 3, 2, 19)); sr -= 0.12 * p; sg -= 0.1 * p; sb -= 0.07 * p; }
+          if (e.key === 'deepplain') { const p = smoothstep(0.3, 0.7, fbm2(x / 13, r.s / 13, 2, 23)); sr -= 0.1 * p; sg -= 0.1 * p; sb -= 0.08 * p; }
           cr += (sr + (rr - sr) * rocky) * e.w;
           cg += (sg + (rg - sg) * rocky) * e.w;
           cb += (sb + (rb - sb) * rocky) * e.w;
-          rip += (e.key === 'pelagic' || e.key === 'abyss' || e.key === 'vents' || e.key === 'tidepool' ? 0.2 : e.key === 'sandflat' ? 1.6 : 1) * e.w;
+          rip += (RIPPLE[e.key] ?? 1) * e.w;
         }
         const v = 0.9 + 0.2 * nn;
         col[k * 3] = cr * ao * v; col[k * 3 + 1] = cg * ao * v; col[k * 3 + 2] = cb * ao * v;
@@ -244,7 +303,18 @@ export class Terrain {
     if (c.ceil) c.ceil.geometry.dispose();
     for (const p of c.props) { try { p.dispose && p.dispose(); } catch (e) { console.error(e); } }
     for (const o of c.obstacles) obstacles.remove(o);
-    c.obstacles.length = 0; c.labels.length = 0;
+    c.obstacles.length = 0; c.labels.length = 0; c.pois.length = 0;
+    c.lodNear.length = 0; c.lodMid.length = 0; c.grid = null;
+  }
+
+  // Points of interest with s in [s0, s1].
+  queryPOIs(s0, s1, out) {
+    out.length = 0;
+    for (const c of this.chunks.values()) {
+      if (c.s0 > s1 || c.s0 + CHUNK < s0) continue;
+      for (const p of c.pois) if (p.s >= s0 && p.s <= s1) out.push(p);
+    }
+    return out;
   }
 
   // Label provider for the "i" overlay.
@@ -258,8 +328,13 @@ export class Terrain {
   update(camS, budgetMs = 4, visDist = AHEAD) {
     // props in chunks entirely beyond the fog's visibility are hidden (terrain stays: it's cheap)
     for (const c of this.chunks.values()) {
-      const vis = c.s0 - camS < visDist;
+      const d = Math.max(0, c.s0 - camS);
+      const vis = d < visDist;
       for (const p of c.props) p.object.visible = vis;
+      // level of detail: small detail only near the camera, medium props at mid range
+      const nearVis = d < Math.min(this.lod.near, visDist), midVis = d < Math.min(this.lod.mid, visDist);
+      if (c.lodNearVis !== nearVis) { c.lodNearVis = nearVis; for (const o of c.lodNear) o.visible = nearVis; }
+      if (c.lodMidVis !== midVis) { c.lodMidVis = midVis; for (const o of c.lodMid) o.visible = midVis; }
     }
     const first = Math.floor((camS - BEHIND) / CHUNK), last = Math.floor((camS + AHEAD) / CHUNK);
     for (const [i, c] of this.chunks) if (i < first || i > last + 2) { this._disposeChunk(c); this.chunks.delete(i); }
@@ -298,12 +373,16 @@ class SkyMap {
       const s = os + j * cell;
       const ws = this.seq.weights(s);
       const hasCeil = ws.some((e) => BIOMES[e.key].ceil);
+      const hasCanopy = ws.some((e) => BIOMES[e.key].canopy);
       const polar = ws.reduce((a, e) => a + (e.key === 'polar' ? e.w : 0), 0);
       for (let i = 0; i < N; i++) {
-        if (!hasCeil) { buf[j * N + i] = 1; continue; }
-        const c = this.shape.ceilingAt(ox + i * cell, s);
-        const open = smoothstep(-1.2, 0.6, c - surf);
-        buf[j * N + i] = Math.max(open, 0.38 * polar + 0.03);
+        let v = 1;
+        if (hasCeil) {
+          const c = this.shape.ceilingExact(ox + i * cell, s);
+          v = Math.max(smoothstep(-1.2, 0.6, c - surf), 0.38 * polar + 0.03);
+        }
+        if (hasCanopy) v *= this.shape.canopyAt(ox + i * cell, s);
+        buf[j * N + i] = v;
       }
       if ((j & 15) === 15) yield;
     }
@@ -325,7 +404,7 @@ class SkyMap {
     this.origin = { x: ox, s: os };
   }
   update(camS, budgetMs) {
-    const active = this.seq.segmentsBetween(camS - 60, camS + 260).some((g) => BIOMES[g.key].ceil);
+    const active = this.seq.segmentsBetween(camS - 60, camS + 260).some((g) => BIOMES[g.key].ceil || BIOMES[g.key].canopy);
     U.uSkyActive.value = active && this.origin ? 1 : 0;
     if (!active) { this.origin = null; return; }
     const N = this.N, cell = this.cell;
